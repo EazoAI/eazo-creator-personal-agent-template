@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { EazoProvider } from "@eazo/sdk/react";
 
+import { ChatRoot } from "./chat-root";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -13,11 +14,17 @@ export const metadata: Metadata = {
 // 不参与构建期静态预渲染，避免内置 /_not-found 预渲染时报错。
 export const dynamic = "force-dynamic";
 
+// ChatApp 常驻在 layout（经 ChatRoot）：/ 与 /c/<id> 导航时不重挂，
+// 保住实时 SSE 流和本地对话状态。page.tsx / c/[id]/page.tsx 只是空壳，
+// 让这两个路由存在；真正的 UI 一直是这同一个 ChatApp 实例。
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh-CN">
       <body>
-        <EazoProvider>{children}</EazoProvider>
+        <EazoProvider>
+          <ChatRoot />
+          {children}
+        </EazoProvider>
       </body>
     </html>
   );

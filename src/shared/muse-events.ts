@@ -34,6 +34,21 @@ export interface MuseCard {
   };
 }
 
+/**
+ * 一条会话的精简投影（前端会话列表用）。
+ *
+ * 直接来自 Qoni 原生的 doAnything.sessions.list —— 令牌按登录用户签发，
+ * 所以列表天然就是当前用户自己的会话，无需我们自建存储。
+ */
+export interface MuseSession {
+  id: string;
+  title: string | null;
+  status: "created" | "idle" | "running" | "stopped" | "timed_out" | "error" | string;
+  /** 该会话最新一个 run；续聊 / 回放都以它为锚。 */
+  latestRunId: string | null;
+  updatedAt: string;
+}
+
 /** 服务端 → 前端的 SSE 事件。 */
 export type MuseServerEvent =
   | { kind: "ready"; runId: string }

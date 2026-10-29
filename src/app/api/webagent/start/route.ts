@@ -1,15 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { QoniScopes, type RunEvent, type InteractionHandle, type RunHandle } from "@qoniai/qoni";
+import { QoniScopes } from "@qoniai/qoni";
 
 import { fetchWebAgentGrant, resolveAuthedUserId } from "@/server/qoni";
-import { mapRunEvent, toMuseCard } from "@/server/event-map";
-import {
-  createRunSession,
-  finishRunSession,
-  pushEvent,
-  registerInteraction,
-} from "@/server/run-store";
+import { createRunSession, finishRunSession, pushEvent } from "@/server/run-store";
+import { driveRun, errMsg, isBusySessionError } from "@/server/drive-run";
 import { Qoni } from "@qoniai/qoni";
 
 export const runtime = "nodejs";
@@ -50,17 +45,30 @@ export async function POST(req: NextRequest) {
     // 无 Key 客户端：只认 webAgentHost，令牌单独传。这正是生产里 app 的姿势。
     const app = new Qoni({ webAgentHost: grant.webAgentHost ?? undefined });
 
-    const run = await app.doAnything.run({
-      token: grant.token,
-      prompt,
-      // 任务可能需要用户亲手操作（验证码/付款）→ 声明接管 scope。
-      taskScopes: [
-        QoniScopes.SITE_LOGIN_REQUEST,
-        QoniScopes.SITE_LOGIN_CONFIRM,
-        QoniScopes.BROWSER_USE_TAKE_CONTROL,
-      ],
-      session: sessionId ? { sessionId } : undefined,
-    });
+    let run;
+    try {
+      run = await app.doAnything.run({
+        token: grant.token,
+        prompt,
+        // 任务可能需要用户亲手操作（验证码/付款）→ 声明接管 scope。
+        taskScopes: [
+          QoniScopes.SITE_LOGIN_REQUEST,
+          QoniScopes.SITE_LOGIN_CONFIRM,
+          QoniScopes.BROWSER_USE_TAKE_CONTROL,
+        ],
+        // 带 sessionId 则作为该会话的后续轮次（续聊）；否则新建会话。
+        session: sessionId ? { sessionId } : undefined,
+      });
+    } catch (err) {
+      // 续聊时若该会话上一个 run 还没结束，createRun 会 409 —— 归一成友好提示，不崩。
+      if (sessionId && isBusySessionError(err)) {
+        return NextResponse.json(
+          { error: "这个会话的上一轮还在进行中，等它结束后再继续发送。" },
+          { status: 409 },
+        );
+      }
+      throw err;
+    }
 
     const session = createRunSession(run.id, run);
     pushEvent(session, { kind: "ready", runId: run.id });
@@ -71,37 +79,14 @@ export async function POST(req: NextRequest) {
       finishRunSession(session.runId);
     });
 
-    return NextResponse.json({ runId: run.id, sessionRef: run.sessionRef ?? null });
+    // 回显 sessionId：新建会话时前端据此把它设为 active 并刷新列表。
+    return NextResponse.json({
+      runId: run.id,
+      sessionId: run.sessionRef?.sessionId ?? sessionId ?? null,
+      sessionRef: run.sessionRef ?? null,
+    });
   } catch (err) {
     return NextResponse.json({ error: errMsg(err) }, { status: 500 });
   }
 }
 
-async function driveRun(run: RunHandle, runId: string) {
-  const { getRunSession } = await import("@/server/run-store");
-  const session = getRunSession(runId);
-  if (!session) return;
-
-  try {
-    await run.wait({
-      timeoutMs: 15 * 60 * 1000,
-      onEvent: (e: RunEvent) => {
-        const mapped = mapRunEvent(e);
-        if (mapped) pushEvent(session, mapped);
-      },
-      onInteraction: (handle: InteractionHandle) => {
-        // 只处理 pending，按 id 去重由前端 + handle 自身保证。
-        if (handle.status !== "pending") return;
-        registerInteraction(session, handle);
-        pushEvent(session, { kind: "card", card: toMuseCard(handle) });
-      },
-    });
-  } finally {
-    finishRunSession(runId);
-  }
-}
-
-function errMsg(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
-}

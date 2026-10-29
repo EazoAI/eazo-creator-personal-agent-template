@@ -68,8 +68,255 @@ button:disabled {
   overflow: hidden;
   background: var(--ground);
   display: grid;
-  grid-template-columns: minmax(340px, 1fr) minmax(380px, 1.15fr);
+  grid-template-columns: var(--rail-w, 220px) minmax(340px, 1fr) minmax(380px, 1.15fr);
   gap: 0;
+}
+
+/* 折叠/展开时平滑过渡列宽；拖拽时由 JS 去掉该类以保证跟手。 */
+.app--rail-anim {
+  transition: grid-template-columns 0.26s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.app--rail-anim .sessions {
+  transition: padding 0.26s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* PC 折叠：会话栏宽度归零并隐藏。 */
+.app--rail-collapsed {
+  grid-template-columns: 0 minmax(340px, 1fr) minmax(380px, 1.15fr);
+}
+
+.app--rail-collapsed .sessions {
+  padding-left: 0;
+  padding-right: 0;
+  border-right: 0;
+  pointer-events: none;
+}
+
+.app--rail-anim .sessions__head,
+.app--rail-anim .sessions__list {
+  transition: opacity 0.18s ease;
+}
+
+.app--rail-collapsed .sessions__head,
+.app--rail-collapsed .sessions__list {
+  opacity: 0;
+}
+
+/* ---- sessions rail ---- */
+.sessions {
+  position: relative;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--line);
+  padding: calc(var(--safe-top) + 22px) 16px calc(var(--safe-bottom) + 16px) calc(var(--safe-left) + 22px);
+  background: rgba(12, 14, 26, 0.35);
+}
+
+.sessions__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex: none;
+  margin-bottom: 16px;
+}
+
+.sessions__new {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #e6e9ef;
+  border-radius: 999px;
+  padding: 5px 13px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  transition: border-color 0.25s, background 0.25s;
+}
+
+.sessions__new:hover:not(:disabled) {
+  border-color: rgba(200, 209, 255, 0.5);
+  background: rgba(37, 40, 67, 0.6);
+}
+
+.sessions__list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #35374b transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 4px;
+}
+
+.sessions__empty {
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1.7;
+  padding: 8px 4px;
+}
+
+.session-item {
+  text-align: left;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #b7bbd4;
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: border-color 0.2s, background 0.2s, color 0.2s;
+}
+
+.session-item:hover:not(:disabled) {
+  background: rgba(37, 40, 67, 0.45);
+  color: #fff;
+}
+
+.session-item--on {
+  border-color: rgba(200, 209, 255, 0.4);
+  background: rgba(158, 165, 210, 0.13);
+  color: #fff;
+}
+
+.session-item__title {
+  font-size: 13px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-item__meta {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+}
+
+.sessions__head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 收起/展开按钮：桌面默认隐藏，窄屏显示。 */
+.rail-close,
+.rail-open {
+  display: none;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: #d6d9ee;
+  border-radius: 10px;
+}
+
+.rail-close svg,
+.rail-open svg {
+  width: 18px;
+  height: 18px;
+}
+
+.rail-close:hover,
+.rail-open:hover {
+  border-color: rgba(200, 209, 255, 0.4);
+}
+
+.topbar__left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.rail-backdrop {
+  display: none;
+}
+
+/* PC 端：收起按钮（在会话栏头部）与展开按钮（折叠后出现在主栏顶部）。 */
+.rail-collapse {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: #d6d9ee;
+  border-radius: 9px;
+}
+
+.rail-collapse svg {
+  width: 17px;
+  height: 17px;
+}
+
+.rail-collapse:hover {
+  border-color: rgba(200, 209, 255, 0.4);
+}
+
+/* 展开按钮默认隐藏，仅 PC 折叠态显示。 */
+.rail-expand {
+  display: none;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: #d6d9ee;
+  border-radius: 10px;
+}
+
+.rail-expand svg {
+  width: 18px;
+  height: 18px;
+}
+
+.rail-expand:hover {
+  border-color: rgba(200, 209, 255, 0.4);
+}
+
+.app--rail-collapsed .rail-expand {
+  display: grid;
+}
+
+/* 拖拽改宽的手柄：贴在会话栏右缘。 */
+.rail-resize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+  touch-action: none;
+}
+
+.rail-resize::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 1px;
+  height: 100%;
+  background: transparent;
+  transition: background 0.2s;
+}
+
+.rail-resize:hover::after {
+  background: rgba(200, 209, 255, 0.5);
+}
+
+.app--rail-collapsed .rail-resize {
+  display: none;
 }
 
 .atmosphere {
@@ -187,7 +434,7 @@ button:disabled {
   padding: 38px 2px 28px;
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 16px;
 }
 
 .date {
@@ -225,10 +472,18 @@ button:disabled {
 .message.progress {
   align-self: flex-start;
   color: var(--dim);
-  font-size: 12px;
-  letter-spacing: 0.04em;
-  line-height: 1.7;
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  line-height: 1.55;
   padding: 0 2px;
+  opacity: 0.72;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+/* 连续的进度行彼此贴紧，不被 thread 的 gap 撑开。 */
+.message.progress + .message.progress {
+  margin-top: -11px;
 }
 
 .eyebrow {
@@ -257,8 +512,137 @@ button:disabled {
   line-height: 1.85;
   font-weight: 400;
   color: #ececf5;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* ---- markdown typography ---- */
+.md > :first-child {
+  margin-top: 0;
+}
+
+.md > :last-child {
+  margin-bottom: 0;
+}
+
+.md p {
+  margin: 0 0 12px;
+  line-height: 1.8;
+}
+
+.md ul,
+.md ol {
+  margin: 0 0 12px;
+  padding-left: 22px;
+}
+
+.md li {
+  margin: 4px 0;
+  line-height: 1.75;
+}
+
+.md li::marker {
+  color: var(--dim);
+}
+
+.md strong {
+  font-weight: 600;
+  color: #fff;
+}
+
+.md em {
+  font-style: italic;
+  color: #e6e5ef;
+}
+
+.md a {
+  color: var(--moon);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.md a:hover {
+  color: #fff;
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  margin: 18px 0 8px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: #f4f4fb;
+}
+
+.md h1 {
+  font-size: 1.3em;
+}
+.md h2 {
+  font-size: 1.18em;
+}
+.md h3 {
+  font-size: 1.06em;
+}
+.md h4 {
+  font-size: 1em;
+}
+
+.md code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.86em;
+  background: rgba(120, 128, 190, 0.16);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1px 5px;
+}
+
+.md pre {
+  background: rgba(10, 12, 22, 0.75);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 0 0 12px;
+}
+
+.md pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 0.85em;
+  line-height: 1.6;
+}
+
+.md blockquote {
+  margin: 0 0 12px;
+  padding: 2px 0 2px 14px;
+  border-left: 2px solid rgba(197, 201, 233, 0.4);
+  color: var(--muted);
+}
+
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 16px 0;
+}
+
+.md table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0 0 12px;
+  font-size: 0.92em;
+}
+
+.md th,
+.md td {
+  border: 1px solid var(--line);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.md th {
+  background: rgba(120, 128, 190, 0.12);
+  font-weight: 600;
 }
 
 .reply.streaming::after {
@@ -313,6 +697,73 @@ button:disabled {
   color: white;
   border-color: rgba(200, 209, 255, 0.48);
   background: rgba(37, 40, 67, 0.55);
+}
+
+/* ---- resume loading ---- */
+.loading {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  padding: 8px 2px;
+  animation: appear 0.4s ease both;
+}
+
+.loading__orb {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 35%, #fafaff 0, #c6c9e6 20%, #737baf 53%, #202541 77%);
+  box-shadow: 0 0 18px rgba(164, 173, 244, 0.42);
+  flex: none;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.loading__dots {
+  display: inline-flex;
+  gap: 5px;
+}
+
+.loading__dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #bdc1e8;
+  animation: bounce 1.1s ease-in-out infinite;
+}
+
+.loading__dots i:nth-child(2) {
+  animation-delay: 0.18s;
+}
+
+.loading__dots i:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
+.loading__text {
+  color: var(--dim);
+}
+
+@keyframes pulse {
+  50% {
+    transform: scale(0.8);
+    opacity: 0.6;
+  }
+}
+
+@keyframes bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  50% {
+    transform: translateY(-5px);
+    opacity: 1;
+  }
 }
 
 .composer-wrap {
@@ -627,8 +1078,59 @@ button:disabled {
     grid-template-rows: minmax(55dvh, auto) minmax(40dvh, 420px);
   }
 
+  /* 窄屏用抽屉，不受 PC 折叠态影响；强制单列。 */
+  .app--rail-collapsed {
+    grid-template-columns: 1fr;
+  }
+
   .app::after {
     left: 50%;
+  }
+
+  /* 会话列表变成左侧抽屉：默认滑出屏外，railOpen 时滑入。 */
+  .sessions {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 40;
+    width: min(82vw, 320px);
+    border-right: 1px solid var(--line);
+    border-bottom: 0;
+    max-height: none;
+    background: #0d0f1c;
+    transform: translateX(-104%);
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 0 60px rgba(0, 0, 0, 0.5);
+    padding-left: calc(var(--safe-left) + 22px);
+    padding-right: 16px;
+    pointer-events: auto;
+  }
+
+  .app--rail-open .sessions {
+    transform: translateX(0);
+  }
+
+  /* 抽屉模式下 PC 的折叠/拖拽控件全部隐藏。 */
+  .rail-collapse,
+  .rail-expand,
+  .rail-resize {
+    display: none !important;
+  }
+
+  .rail-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 35;
+    border: 0;
+    background: rgba(5, 6, 14, 0.55);
+    backdrop-filter: blur(2px);
+  }
+
+  .rail-close,
+  .rail-open {
+    display: grid;
   }
 
   .shell {
