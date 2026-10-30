@@ -12,8 +12,8 @@ import { normalizeLocale, type LocaleCode } from "@/i18n";
 import { request } from "@/lib/request";
 import { BrowserPane } from "./browser-pane";
 import { HitlCard } from "./hitl-card";
-import { LangSwitcher } from "./lang-switcher";
 import { Markdown } from "./markdown";
+import { UserMenu } from "./user-menu";
 import { driveRunInBrowser, type RunDriver, type StartRunResult } from "@/lib/qoni-client";
 import {
   isOpenCard,
@@ -701,14 +701,6 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
           <div className="sessions__head-actions">
             <button
               type="button"
-              className="sessions__new"
-              onClick={newConversation}
-              title={t("rail.newChatTitle")}
-            >
-              {t("rail.newChat")}
-            </button>
-            <button
-              type="button"
               className="rail-collapse"
               aria-label={t("rail.collapseSidebar")}
               title={t("rail.collapseSidebar")}
@@ -730,6 +722,20 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
             </button>
           </div>
         </div>
+
+        <button
+          type="button"
+          className={`sessions__new${shownSessionId === null ? " sessions__new--on" : ""}`}
+          onClick={newConversation}
+          title={t("rail.newChatTitle")}
+          aria-label={t("rail.newChat")}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M12 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6" />
+            <path d="M18.4 2.6a2 2 0 0 1 2.9 2.9L12 14.8l-3.6.9.9-3.6 9.1-9.5z" />
+          </svg>
+          <span className="sessions__new-label">{t("rail.newChat")}</span>
+        </button>
 
         <div className="sessions__list">
           {!authState.authenticated ? (
@@ -755,6 +761,8 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
             ))
           )}
         </div>
+
+        <UserMenu />
 
         <div
           className="rail-resize"
@@ -797,21 +805,9 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
                 <path d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
-            <div className="brand">agent.</div>
+            <div className="brand">{t("brand")}</div>
           </div>
           <div className="presence">
-            <LangSwitcher />
-            {authState.loading ? (
-              <span>…</span>
-            ) : authState.authenticated ? (
-              <button type="button" className="account" onClick={() => auth.logout()}>
-                {authState.user?.name || authState.user?.email || t("auth.signedIn")} · {t("auth.signOut")}
-              </button>
-            ) : (
-              <button type="button" className="account" onClick={() => auth.login().catch(() => {})}>
-                {t("auth.signInWithEazo")}
-              </button>
-            )}
             <i className={running ? undefined : "idle"} />
             {running ? (waitingForUser ? t("presence.waiting") : t("presence.working")) : t("presence.idle")}
           </div>

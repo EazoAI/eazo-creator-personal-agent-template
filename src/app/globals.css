@@ -81,16 +81,15 @@ button:disabled {
   transition: padding 0.26s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Desktop collapsed: session rail width goes to zero and is hidden. */
+/* Desktop collapsed: narrow icon strip — avatar stays reachable. */
 .app--rail-collapsed {
-  grid-template-columns: 0 minmax(340px, 1fr) minmax(380px, 1.15fr);
+  grid-template-columns: 56px minmax(340px, 1fr) minmax(380px, 1.15fr);
 }
 
 .app--rail-collapsed .sessions {
-  padding-left: 0;
-  padding-right: 0;
-  border-right: 0;
-  pointer-events: none;
+  padding-left: 8px;
+  padding-right: 8px;
+  overflow: visible;
 }
 
 .app--rail-anim .sessions__head,
@@ -100,7 +99,11 @@ button:disabled {
 
 .app--rail-collapsed .sessions__head,
 .app--rail-collapsed .sessions__list {
-  opacity: 0;
+  display: none;
+}
+
+.app--rail-collapsed .rail-resize {
+  display: none;
 }
 
 /* ---- sessions rail ---- */
@@ -109,10 +112,12 @@ button:disabled {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  /* visible so the user-menu popover can extend past the rail; the list scrolls on its own. */
+  overflow: visible;
   border-right: 1px solid var(--line);
   padding: calc(var(--safe-top) + 22px) 16px calc(var(--safe-bottom) + 16px) calc(var(--safe-left) + 22px);
   background: rgba(12, 14, 26, 0.35);
+  z-index: 5;
 }
 
 .sessions__head {
@@ -125,20 +130,58 @@ button:disabled {
 }
 
 .sessions__new {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
   color: #e6e9ef;
-  border-radius: 999px;
-  padding: 5px 13px;
-  font-size: 11px;
-  letter-spacing: 0.04em;
+  font-size: 13.5px;
+  font-weight: 500;
+  text-align: left;
   white-space: nowrap;
-  transition: border-color 0.25s, background 0.25s;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+/* Divider between New chat and the session list. */
+.sessions__new + .sessions__list {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 14px;
+}
+
+.sessions__new svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+.sessions__new-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .sessions__new:hover:not(:disabled) {
-  border-color: rgba(200, 209, 255, 0.5);
-  background: rgba(37, 40, 67, 0.6);
+  background: rgba(37, 40, 67, 0.55);
+}
+
+.sessions__new--on {
+  background: rgba(158, 165, 210, 0.12);
+  border-color: rgba(193, 200, 239, 0.14);
+}
+
+/* Collapsed strip: icon-only new chat. */
+.app--rail-collapsed .sessions__new {
+  justify-content: center;
+  padding: 10px 0;
+}
+
+.app--rail-collapsed .sessions__new-label {
+  display: none;
 }
 
 .sessions__list {
@@ -380,10 +423,11 @@ button:disabled {
 }
 
 .brand {
-  font-size: 21px;
+  font-size: 18px;
   font-weight: 500;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.04em;
   line-height: 1;
+  white-space: nowrap;
 }
 
 .presence {
@@ -410,35 +454,293 @@ button:disabled {
   box-shadow: none;
 }
 
-.account {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: #e6e9ef;
-  border-radius: 999px;
-  padding: 4px 12px;
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
+/* ---- sidebar user menu ---- */
+.user-menu {
+  position: relative;
+  flex: none;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.account:hover {
-  border-color: rgba(255, 255, 255, 0.28);
+.user-menu__row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
 }
 
-.lang-switch {
+.user-menu__row--ghost {
+  opacity: 0.5;
+  padding: 6px 4px;
+}
+
+.user-menu__identity {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 12px;
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  color: var(--muted);
-  border-radius: 999px;
-  padding: 4px 10px;
-  font-size: 11px;
-  letter-spacing: 0.04em;
+  color: #e6e9ef;
+  text-align: left;
+  transition: background 0.2s;
+}
+
+.user-menu__identity:hover {
+  background: rgba(37, 40, 67, 0.55);
+}
+
+.user-menu__avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex: none;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.user-menu__avatar--fallback {
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #d6d9ee;
+  background: linear-gradient(145deg, rgba(120, 128, 190, 0.45), rgba(40, 44, 78, 0.9));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.user-menu__meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.user-menu__name {
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.lang-switch:hover {
-  border-color: rgba(255, 255, 255, 0.28);
-  color: var(--ink);
+.user-menu__email {
+  font-size: 10px;
+  color: var(--dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-menu__more {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dim);
+  transition: background 0.2s, color 0.2s;
+}
+
+.user-menu__more svg {
+  width: 16px;
+  height: 16px;
+}
+
+.user-menu__more:hover {
+  background: rgba(37, 40, 67, 0.55);
+  color: #e6e9ef;
+}
+
+.user-menu__signin {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #e6e9ef;
+  text-align: left;
+  transition: background 0.2s;
+}
+
+.user-menu__signin:hover {
+  background: rgba(37, 40, 67, 0.55);
+}
+
+.user-menu__signin-label {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-menu__popover {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  min-width: 220px;
+  padding: 8px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: #141628;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  animation: appear 0.18s ease both;
+}
+
+.user-menu__popover-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 10px;
+}
+
+.user-menu__popover-head .user-menu__avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+}
+
+.user-menu__popover-meta {
+  min-width: 0;
+  flex: 1;
+}
+
+.user-menu__popover-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-menu__popover-email {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-menu__sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.user-menu__item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #dde0f0;
+  font-size: 13px;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.user-menu__item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.user-menu__item--sub {
+  padding-left: 38px;
+  font-size: 12.5px;
+  color: #c4c8df;
+}
+
+.user-menu__item--on {
+  color: #fff;
+}
+
+.user-menu__item-icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+.user-menu__item-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.user-menu__item-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.user-menu__item-trail {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.user-menu__item-trail svg {
+  width: 14px;
+  height: 14px;
+}
+
+.user-menu__check {
+  color: var(--moon);
+  font-size: 12px;
+}
+
+.user-menu__submenu {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 2px;
+}
+
+/* Collapsed icon strip: avatar only; popover opens to the right. */
+.app--rail-collapsed .user-menu {
+  margin-top: auto;
+  border-top: 0;
+  padding-top: 0;
+}
+
+.app--rail-collapsed .user-menu__meta,
+.app--rail-collapsed .user-menu__more,
+.app--rail-collapsed .user-menu__signin-label {
+  display: none;
+}
+
+.app--rail-collapsed .user-menu__row,
+.app--rail-collapsed .user-menu__identity,
+.app--rail-collapsed .user-menu__signin {
+  justify-content: center;
+  padding: 6px 0;
+}
+
+.app--rail-collapsed .user-menu__popover {
+  left: calc(100% + 10px);
+  right: auto;
+  bottom: 0;
+  width: 240px;
 }
 
 .thread {
@@ -1404,6 +1706,48 @@ button:disabled {
   /* Narrow screens use a drawer; ignore desktop collapse and force a single column. */
   .app--rail-collapsed {
     grid-template-columns: 1fr;
+  }
+
+  /* Drawer always shows the full user row, even if desktop collapse is persisted. */
+  .app--rail-collapsed .sessions__head,
+  .app--rail-collapsed .sessions__list {
+    display: flex;
+  }
+
+  .app--rail-collapsed .sessions__list {
+    flex-direction: column;
+  }
+
+  .app--rail-collapsed .user-menu {
+    margin-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    padding-top: 10px;
+  }
+
+  .app--rail-collapsed .user-menu__meta {
+    display: flex;
+  }
+
+  .app--rail-collapsed .user-menu__more {
+    display: grid;
+  }
+
+  .app--rail-collapsed .user-menu__signin-label {
+    display: inline;
+  }
+
+  .app--rail-collapsed .user-menu__row,
+  .app--rail-collapsed .user-menu__identity,
+  .app--rail-collapsed .user-menu__signin {
+    justify-content: flex-start;
+    padding: 6px 8px;
+  }
+
+  .app--rail-collapsed .user-menu__popover {
+    left: 0;
+    right: 0;
+    bottom: calc(100% + 8px);
+    width: auto;
   }
 
   .app::after {

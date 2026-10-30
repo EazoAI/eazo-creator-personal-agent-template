@@ -3,6 +3,7 @@
     "title": "Agent · Cloud browser at your service",
     "description": "Tell the cloud browser agent what to do on the web in one sentence."
   },
+  "brand": "Your personal agent",
   "today": {
     "morning": "This morning · Say one sentence to start",
     "day": "Today · Say one sentence to start",
@@ -47,7 +48,7 @@
   },
   "rail": {
     "title": "Sessions",
-    "newChat": "+ New chat",
+    "newChat": "New chat",
     "newChatTitle": "Start a fresh session",
     "collapseSidebar": "Collapse sidebar",
     "expandSidebar": "Expand sidebar",
@@ -62,6 +63,9 @@
     "signedIn": "Signed in",
     "signOut": "Sign out",
     "signInWithEazo": "Sign in with Eazo"
+  },
+  "userMenu": {
+    "open": "Account menu"
   },
   "presence": {
     "working": "Working for you",

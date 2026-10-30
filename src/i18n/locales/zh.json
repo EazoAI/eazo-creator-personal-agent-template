@@ -3,6 +3,7 @@
     "title": "Agent · 云端浏览器替你办事",
     "description": "一句话让云端浏览器 Agent 替你完成网页任务"
   },
+  "brand": "你的私人 Agent",
   "today": {
     "morning": "今早 · 说一句话开始",
     "day": "今天 · 说一句话开始",
@@ -47,7 +48,7 @@
   },
   "rail": {
     "title": "会话",
-    "newChat": "+ 新对话",
+    "newChat": "新对话",
     "newChatTitle": "开一个全新会话",
     "collapseSidebar": "收起侧边栏",
     "expandSidebar": "展开侧边栏",
@@ -60,8 +61,11 @@
   },
   "auth": {
     "signedIn": "已登录",
-    "signOut": "退出",
+    "signOut": "退出登录",
     "signInWithEazo": "用 Eazo 账号登录"
+  },
+  "userMenu": {
+    "open": "账号菜单"
   },
   "presence": {
     "working": "正在替你操作",
