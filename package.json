@@ -2,7 +2,7 @@
   "name": "eazo-creator-personal-agent-template",
   "version": "0.1.0",
   "private": true,
-  "description": "Personal agent demo —— 直接用 Qoni WebAgent SDK 快速体验云端浏览器 Agent 能力",
+  "description": "Personal agent demo — Qoni WebAgent SDK with i18next (en/zh)",
   "scripts": {
     "dev": "next dev -p 3200",
     "build": "next build",
@@ -13,9 +13,12 @@
   "dependencies": {
     "@eazo/sdk": "0.22.13",
     "@qoniai/qoni": "0.10.1",
+    "buffer": "^6.0.3",
+    "i18next": "^26.5.11",
     "next": "15.1.6",
     "react": "19.0.0",
     "react-dom": "19.0.0",
+    "react-i18next": "^17.1.9",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1"
   },

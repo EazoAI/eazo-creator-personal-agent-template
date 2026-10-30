@@ -1,91 +1,138 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 
 import { auth } from "@eazo/sdk";
 import { useEazo } from "@eazo/sdk/react";
 
-import { HitlCard } from "./hitl-card";
-import { Markdown } from "./markdown";
+import { normalizeLocale, type LocaleCode } from "@/i18n";
 import { request } from "@/lib/request";
-import type { MuseCard, MuseCardAction, MuseServerEvent, MuseSession } from "@/shared/muse-events";
+import { BrowserPane } from "./browser-pane";
+import { HitlCard } from "./hitl-card";
+import { LangSwitcher } from "./lang-switcher";
+import { Markdown } from "./markdown";
+import { driveRunInBrowser, type RunDriver, type StartRunResult } from "@/lib/qoni-client";
+import {
+  isOpenCard,
+  type MuseBrowser,
+  type MuseBrowserControlAction,
+  type MuseCard,
+  type MuseCardAction,
+  type MuseServerEvent,
+  type MuseSession,
+  type MuseStep,
+  type MuseStepUpdate,
+} from "@/shared/muse-events";
 
 interface ChatItem {
   id: string;
-  role: "user" | "assistant" | "progress";
+  role: "user" | "assistant" | "progress" | "step" | "thinking";
   text: string;
+  /** role === "step": the tool call it renders. */
+  step?: MuseStep;
+  /** role === "step": seqs of the notes already folded in (replay-safe dedup). */
+  noteSeqs?: number[];
 }
 
-const EXAMPLES = [
-  "打开 https://en.wikipedia.org/wiki/Singapore ，用中文总结这个国家的关键信息。",
-  "帮我查一下今天上海的天气，一句话告诉我要不要带伞。",
-  "打开 Hacker News，告诉我现在排第一的帖子标题和大致讨论了什么。",
-];
-
-function todayLabel() {
-  const h = new Date().getHours();
-  if (h < 11) return "今早 · 说一句话开始";
-  if (h < 18) return "今天 · 说一句话开始";
-  return "今晚 · 说一句话开始";
-}
-
-function sessionLabel(s: MuseSession): string {
-  const t = (s.title ?? "").trim();
-  return t || "未命名会话";
-}
+const stepItemId = (stepId: string) => `step-${stepId}`;
 
 /**
- * 把连续的 progress 碎片拼成可读文本。
- *
- * Qoni 把 agent 的推理按词/短语碎片逐条推来（"The" / "user" / "wants…"），
- * 这里按「是否像同一句的延续」决定用空格续写还是另起一行：
- * - 延续（新片段以小写/标点开头，或上一段没有以句末标点结束）→ 空格拼接；
- * - 否则（像工具步骤标签 读取网页 / agent_core.* 等）→ 换行，单独成行。
+ * Merge a streamed chunk into the text shown so far. Providers differ: some send
+ * token deltas, others the whole growing text on every event (same as the Qoni Console).
  */
-function joinProgress(prevText: string, next: string): string {
-  const prev = prevText.replace(/\s+$/, "");
-  const frag = next.replace(/^\s+/, "");
-  if (!prev) return frag;
-  if (!frag) return prev;
-
-  const prevEndsSentence = /[.!?。！？:：]$/.test(prev);
-  const fragStartsContinuation = /^[a-z,.;:)\]'"”’\-—]/.test(frag);
-  const continues = fragStartsContinuation || !prevEndsSentence;
-
-  // 片段本身就是独立标签（纯工具名 / 短 CJK 动作）时，倾向换行。
-  const looksLikeLabel = /^[\u4e00-\u9fa5]{2,8}$/.test(frag) || /^[a-z_]+\.[a-z_]+$/i.test(frag);
-
-  if (continues && !looksLikeLabel) {
-    // 同句延续：英文词/数字之间补一个空格，其余（含中文、紧跟的标点）直接相接。
-    const needSpace =
-      !/^[,.;:)\]'"”’]/.test(frag) && /[A-Za-z0-9)\]]$/.test(prev) && /^[A-Za-z0-9(\[]/.test(frag);
-    return needSpace ? `${prev} ${frag}` : `${prev}${frag}`;
-  }
-  return `${prev}\n${frag}`;
+function mergeStreamingText(current: string, incoming: string): string {
+  if (!current) return incoming;
+  if (!incoming || incoming === current || current.endsWith(incoming)) return current;
+  if (incoming.startsWith(current)) return incoming;
+  return current + incoming;
 }
 
-function formatWhen(iso: string): string {
+function applyStepUpdate(prev: ChatItem[], update: MuseStepUpdate): ChatItem[] {
+  if (update.type === "lifecycle") {
+    const { step } = update;
+    const id = stepItemId(step.id);
+    const idx = prev.findIndex((p) => p.id === id);
+    if (idx < 0) return [...prev, { id, role: "step", text: step.label, step, noteSeqs: [] }];
+    const existing = prev[idx];
+    // A retry (`started X → failed X → started X`) restarts the same entry.
+    const restarted = step.status === "running" && existing.step?.status !== "running";
+    const copy = [...prev];
+    copy[idx] = {
+      ...existing,
+      text: step.label || existing.text,
+      step: {
+        ...existing.step,
+        ...step,
+        label: step.label || existing.step?.label || "",
+        notes: restarted ? [] : existing.step?.notes,
+      },
+      noteSeqs: restarted ? [] : existing.noteSeqs,
+    };
+    return copy;
+  }
+  const id = stepItemId(update.stepId);
+  const idx = prev.findIndex((p) => p.id === id);
+  if (idx < 0) return prev;
+  const existing = prev[idx];
+  if (existing.noteSeqs?.includes(update.seq)) return prev;
+  const copy = [...prev];
+  copy[idx] = {
+    ...existing,
+    step: existing.step ? { ...existing.step, notes: [...(existing.step.notes ?? []), update.note] } : existing.step,
+    noteSeqs: [...(existing.noteSeqs ?? []), update.seq],
+  };
+  return copy;
+}
+
+const CONTROL_CARD_TYPES = new Set(["take_control", "site_login"]);
+
+function todayLabel(t: TFunction) {
+  const h = new Date().getHours();
+  if (h < 11) return t("today.morning");
+  if (h < 18) return t("today.day");
+  return t("today.evening");
+}
+
+function sessionLabel(s: MuseSession, t: TFunction): string {
+  const title = (s.title ?? "").trim();
+  return title || t("session.untitled");
+}
+
+function formatWhen(iso: string, locale: LocaleCode, t: TFunction): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   const now = Date.now();
   const diff = now - d.getTime();
   const min = Math.floor(diff / 60000);
-  if (min < 1) return "刚刚";
-  if (min < 60) return `${min} 分钟前`;
+  if (min < 1) return t("time.justNow");
+  if (min < 60) return t("time.minutesAgo", { n: min });
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr} 小时前`;
+  if (hr < 24) return t("time.hoursAgo", { n: hr });
   const day = Math.floor(hr / 24);
-  if (day < 7) return `${day} 天前`;
-  return d.toLocaleDateString();
+  if (day < 7) return t("time.daysAgo", { n: day });
+  return d.toLocaleDateString(locale === "zh" ? "zh-CN" : "en-US");
 }
 
 export default function ChatApp({ sessionId }: { sessionId?: string }) {
   const router = useRouter();
+  const { t, i18n } = useTranslation();
+  const locale = (normalizeLocale(i18n.resolvedLanguage || i18n.language) ?? "en") as LocaleCode;
+  const examples = t("welcome.examples", { returnObjects: true }) as string[];
   const authState = useEazo((s) => s.auth);
   const [items, setItems] = useState<ChatItem[]>([]);
   const [cards, setCards] = useState<MuseCard[]>([]);
   const [liveUrl, setLiveUrl] = useState<string | null>(null);
+  /** Control / login surface URL for the main browser, while the user holds it. */
+  const [controlUrl, setControlUrl] = useState<string | null>(null);
+  const [browsers, setBrowsers] = useState<MuseBrowser[]>([]);
+  const [viewerKey, setViewerKey] = useState(0);
+  const [runStatus, setRunStatus] = useState<string | null>(null);
+  const [stopping, setStopping] = useState(false);
+  /** Stop pressed before `/start` returned: cancel as soon as the driver exists. */
+  const stopRequestedRef = useRef(false);
   const [input, setInput] = useState("");
   const [running, setRunning] = useState(false);
   const [cardBusy, setCardBusy] = useState(false);
@@ -93,17 +140,15 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [resuming, setResuming] = useState(false);
   const [railOpen, setRailOpen] = useState(false);
-  // 组件当前正在展示哪个会话（null = 新对话空态）。它是唯一的会话归属状态，
-  // 由「URL -> effect」驱动；start 创建新会话时也先更新它再切 URL。
-  // 初始化为 null（不读 prop）：这样首屏若 URL 带 id，effect 会发现不一致并回放。
+  // Which session is shown (null = new chat). URL-driven; start sets this before router.push.
   const [shownSessionId, setShownSessionId] = useState<string | null>(null);
   const runIdRef = useRef<string | null>(null);
+  const liveUrlRef = useRef<string | null>(null);
   const chatRef = useRef<HTMLDivElement>(null);
-  const esRef = useRef<EventSource | null>(null);
+  const driverRef = useRef<RunDriver | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const refreshSessionsRef = useRef<() => void>(() => {});
 
-  // PC 端会话栏：可折叠 + 可拖拽改宽（都持久化到 localStorage）。
   const RAIL_MIN = 180;
   const RAIL_MAX = 420;
   const RAIL_DEFAULT = 220;
@@ -112,7 +157,6 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
   const [railAnim, setRailAnim] = useState(true);
   const draggingRef = useRef(false);
 
-  // 首帧从 localStorage 恢复偏好。
   useEffect(() => {
     try {
       const w = Number(localStorage.getItem("muse.railWidth"));
@@ -135,11 +179,10 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
     });
   }, []);
 
-  // 拖拽改宽：pointer 事件，拖动中禁用选中/过渡，松手落盘。
   const startRailDrag = useCallback((e: React.PointerEvent) => {
     e.preventDefault();
     draggingRef.current = true;
-    setRailAnim(false); // 拖拽期间关闭过渡，保证跟手
+    setRailAnim(false);
     document.body.style.userSelect = "none";
     document.body.style.cursor = "col-resize";
 
@@ -150,7 +193,7 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
     };
     const onUp = () => {
       draggingRef.current = false;
-      setRailAnim(true); // 松手后恢复过渡
+      setRailAnim(true);
       document.body.style.userSelect = "";
       document.body.style.cursor = "";
       window.removeEventListener("pointermove", onMove);
@@ -179,8 +222,8 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
     el.style.height = `${Math.min(el.scrollHeight, 130)}px`;
   }, [input]);
 
-  const handleServerEvent = useCallback((ev: MuseServerEvent) => {
-    // 回放/实时的第一条真实事件到达，撤掉 resume 加载态。
+  const handleServerEvent = useCallback(
+    (ev: MuseServerEvent) => {
     if (ev.kind !== "ready") setResuming(false);
     switch (ev.kind) {
       case "ready":
@@ -193,22 +236,56 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
             copy[idx] = { ...copy[idx], text: ev.text };
             return copy;
           }
+          if (ev.role === "human") {
+            // The prompt we already echoed locally comes back on the stream: adopt its id, don't duplicate.
+            const local = prev.findIndex((p) => p.role === "user" && p.id.startsWith("u-") && p.text.trim() === ev.text.trim());
+            if (local >= 0) {
+              const copy = [...prev];
+              copy[local] = { ...copy[local], id: ev.messageId };
+              return copy;
+            }
+            return [...prev, { id: ev.messageId, role: "user", text: ev.text }];
+          }
           return [...prev, { id: ev.messageId, role: "assistant", text: ev.text }];
         });
+        break;
+      case "thinking":
+        setItems((prev) => {
+          const last = prev[prev.length - 1];
+          // Reasoning merges into the open thinking bubble; any other item settles it.
+          if (last && last.role === "thinking") {
+            const copy = [...prev];
+            copy[copy.length - 1] = { ...last, text: mergeStreamingText(last.text, ev.text) };
+            return copy;
+          }
+          return [...prev, { id: `t-${Date.now()}-${Math.random()}`, role: "thinking", text: ev.text }];
+        });
+        break;
+      case "step":
+        setItems((prev) => applyStepUpdate(prev, ev.update));
         break;
       case "progress":
         setItems((prev) => {
           const last = prev[prev.length - 1];
-          // 连续的 progress 碎片合并进上一条，拼成一段话，而不是每条一行。
-          if (last && last.role === "progress") {
-            const copy = [...prev];
-            copy[copy.length - 1] = { ...last, text: joinProgress(last.text, ev.text) };
-            return copy;
-          }
+          if (last && last.role === "progress" && last.text === ev.text) return prev;
           return [...prev, { id: `p-${Date.now()}-${Math.random()}`, role: "progress", text: ev.text }];
         });
         break;
+      case "status":
+        setRunStatus(ev.status);
+        break;
+      case "browsers":
+        setBrowsers(ev.browsers);
+        break;
       case "screen":
+        if (ev.control) {
+          setControlUrl(ev.liveUrl);
+          if (ev.reload) setViewerKey((k) => k + 1);
+          break;
+        }
+        // Like the Console: only re-attach on a forced reload or when the same URL is re-sent.
+        if (liveUrlRef.current && (ev.reload || liveUrlRef.current === ev.liveUrl)) setViewerKey((k) => k + 1);
+        liveUrlRef.current = ev.liveUrl;
         setLiveUrl(ev.liveUrl);
         break;
       case "card":
@@ -216,8 +293,10 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
           const idx = prev.findIndex((c) => c.id === ev.card.id);
           const next = idx >= 0 ? [...prev] : [...prev, ev.card];
           if (idx >= 0) next[idx] = ev.card;
-          return next.filter((c) => c.status === "pending");
+          return next.filter(isOpenCard);
         });
+        // A control round that is no longer active hands the viewer back to the agent's live URL.
+        if (CONTROL_CARD_TYPES.has(ev.card.type) && !isOpenCard(ev.card)) setControlUrl(null);
         break;
       case "done":
         setItems((prev) => [
@@ -225,49 +304,93 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
           {
             id: `done-${Date.now()}`,
             role: "progress",
-            text: `任务结束：${ev.status}${ev.terminalReason ? ` (${ev.terminalReason})` : ""}`,
+            text: t("task.done", {
+              status: t(`task.status.${ev.status}`),
+              reason:
+                ev.terminalReason && ev.terminalReason !== "done"
+                  ? t("task.doneReason", { reason: ev.terminalReason })
+                  : "",
+            }),
           },
         ]);
         setRunning(false);
+        setRunStatus(null);
         setCards([]);
-        esRef.current?.close();
-        // 任务结束后刷新会话列表：新建的会话此时会带标题入列。
+        setControlUrl(null);
+        driverRef.current?.stop();
         refreshSessionsRef.current();
         break;
       case "error":
-        setItems((prev) => [...prev, { id: `err-${Date.now()}`, role: "progress", text: `出错：${ev.message}` }]);
+        setItems((prev) => [
+          ...prev,
+          { id: `err-${Date.now()}`, role: "progress", text: t("task.error", { message: ev.message }) },
+        ]);
         setRunning(false);
-        esRef.current?.close();
+        setRunStatus(null);
+        driverRef.current?.stop();
         break;
       default:
         break;
     }
-  }, []);
-
-  // 连 SSE 收某个 run 的事件流（start 新 run 与回放历史会话共用）。
-  const streamRun = useCallback(
-    (runId: string) => {
-      runIdRef.current = runId;
-      esRef.current?.close();
-      const es = new EventSource(`/api/webagent/stream?runId=${encodeURIComponent(runId)}`);
-      esRef.current = es;
-      es.onmessage = (e) => {
-        const ev = JSON.parse(e.data) as MuseServerEvent | { kind: "_eof" };
-        if ((ev as { kind: string }).kind === "_eof") {
-          es.close();
-          setRunning(false);
-          return;
-        }
-        handleServerEvent(ev as MuseServerEvent);
-      };
-      es.onerror = () => {
-        es.close();
-        setResuming(false);
-        setRunning(false);
-      };
     },
-    [handleServerEvent],
+    [t],
   );
+
+  /** Cancel the active run on the backend; the stream then delivers `done` (canceled). */
+  const cancelDriver = useCallback(
+    async (driver: RunDriver) => {
+      try {
+        await driver.cancel();
+      } catch (err) {
+        setStopping(false);
+        setItems((prev) => [
+          ...prev,
+          {
+            id: `warn-${Date.now()}`,
+            role: "progress",
+            text: t("task.stopError", { message: err instanceof Error ? err.message : String(err) }),
+          },
+        ]);
+      }
+    },
+    [t],
+  );
+
+  const startDriver = useCallback(
+    (result: StartRunResult) => {
+      runIdRef.current = result.runId;
+      driverRef.current?.stop();
+      const driver = driveRunInBrowser(result, (ev) => {
+        if (ev.kind !== "ready") setResuming(false);
+        handleServerEvent(ev);
+      });
+      driverRef.current = driver;
+      if (stopRequestedRef.current) {
+        stopRequestedRef.current = false;
+        void cancelDriver(driver);
+      }
+    },
+    [handleServerEvent, cancelDriver],
+  );
+
+  const stopRun = useCallback(() => {
+    if (!running || stopping) return;
+    setStopping(true);
+    const driver = driverRef.current;
+    // Before `/start` returns there is no driver yet: cancel right after it is created.
+    if (!driver) {
+      stopRequestedRef.current = true;
+      return;
+    }
+    void cancelDriver(driver);
+  }, [running, stopping, cancelDriver]);
+
+  // Any end of the run (done / error / reset) clears the stop state.
+  useEffect(() => {
+    if (running) return;
+    setStopping(false);
+    stopRequestedRef.current = false;
+  }, [running]);
 
   const refreshSessions = useCallback(async () => {
     if (!authState.authenticated) return;
@@ -278,7 +401,7 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
       const data = (await res.json()) as { sessions?: MuseSession[] };
       setSessions(data.sessions ?? []);
     } catch {
-      // 列表拉取失败不打断主流程，静默即可。
+      /* ignore list errors */
     } finally {
       setSessionsLoading(false);
     }
@@ -290,33 +413,39 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
     };
   }, [refreshSessions]);
 
-  // 登录后拉一次会话列表。
   useEffect(() => {
     if (authState.authenticated) void refreshSessions();
     else setSessions([]);
   }, [authState.authenticated, refreshSessions]);
 
-  // 重置到新对话空态（纯本地状态，不碰路由）。
+  /** Clear everything bound to the previous run's browser / status. */
+  const resetRunView = useCallback(() => {
+    setCards([]);
+    setLiveUrl(null);
+    liveUrlRef.current = null;
+    setControlUrl(null);
+    setBrowsers([]);
+    setRunStatus(null);
+  }, []);
+
   const resetToNew = useCallback(() => {
-    esRef.current?.close();
+    driverRef.current?.stop();
     runIdRef.current = null;
     setShownSessionId(null);
     setItems([]);
-    setCards([]);
-    setLiveUrl(null);
+    resetRunView();
     setResuming(false);
     setRunning(false);
-  }, []);
+  }, [resetRunView]);
 
-  // 回放一个会话（按 id）：清空对话区、resume → attach 最新 run → 连 SSE 回放。
   const resumeSession = useCallback(
     async (id: string) => {
-      esRef.current?.close();
+      driverRef.current?.stop();
+      driverRef.current = null;
       runIdRef.current = null;
       setShownSessionId(id);
       setItems([]);
-      setCards([]);
-      setLiveUrl(null);
+      resetRunView();
       setRunning(true);
       setResuming(true);
 
@@ -327,33 +456,33 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
           body: JSON.stringify({ sessionId: id }),
         });
         const data = await res.json();
-        if (res.status === 401) throw new Error("请先登录");
-        if (!res.ok) throw new Error(data?.error || "打开会话失败");
+        if (res.status === 401) throw new Error(t("errors.loginRequired"));
+        if (!res.ok) throw new Error(data?.error || t("errors.openSessionFailed"));
 
         if (data.empty || !data.runId) {
-          // 会话还没跑过，没历史可回放；直接进可续聊的空态。
           setResuming(false);
           setRunning(false);
           return;
         }
-        streamRun(data.runId);
+        startDriver(data as StartRunResult);
       } catch (err) {
         setItems((prev) => [
           ...prev,
           {
             id: `err-${Date.now()}`,
             role: "progress",
-            text: `打开会话出错：${err instanceof Error ? err.message : String(err)}`,
+            text: t("task.openSessionError", {
+              message: err instanceof Error ? err.message : String(err),
+            }),
           },
         ]);
         setResuming(false);
         setRunning(false);
       }
     },
-    [streamRun],
+    [startDriver, resetRunView, t],
   );
 
-  // 导航动作只改 URL；真正的状态切换全部交给下面这个「URL 是唯一数据源」的 effect。
   const newConversation = useCallback(() => {
     if (running) return;
     setRailOpen(false);
@@ -369,13 +498,8 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
     [running, shownSessionId, router],
   );
 
-  // 唯一数据源：URL 里的 sessionId 变了才动作。
-  // - 和当前展示的一致（含 start 新建后先同步 shownSessionId 的情况）：什么都不做，
-  //   不会打断正在进行的实时流。
-  // - 指向一个新 id：回放它。
-  // - 变空（回到 /）：重置成新对话空态。
   useEffect(() => {
-    if (!authState.authenticated) return; // 等登录态就绪
+    if (!authState.authenticated) return;
     const urlId = sessionId ?? null;
     if (urlId === shownSessionId) return;
     if (urlId) void resumeSession(urlId);
@@ -389,14 +513,17 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
         try {
           await auth.login();
         } catch {
-          return; // 用户取消登录
+          return;
         }
       }
       setItems((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text: prompt }]);
       setInput("");
+      // Drop the previous (finished) driver so a stop pressed now waits for this run's driver.
+      driverRef.current?.stop();
+      driverRef.current = null;
+      stopRequestedRef.current = false;
       setRunning(true);
-      setCards([]);
-      setLiveUrl(null);
+      resetRunView();
 
       try {
         const res = await request("/api/webagent/start", {
@@ -404,66 +531,111 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             prompt,
-            // 有当前会话则续聊；否则新建。
             sessionId: shownSessionId ?? undefined,
           }),
         });
         const data = await res.json();
-        if (res.status === 401) throw new Error("请先登录");
-        if (!res.ok) throw new Error(data?.error || "启动失败");
+        if (res.status === 401) throw new Error(t("errors.loginRequired"));
+        if (!res.ok) throw new Error(data?.error || t("errors.startFailed"));
 
         runIdRef.current = data.runId;
-        // 新建会话：先把 shownSessionId 设成新 id，再切 URL ——
-        // 这样 URL effect 发现 urlId === shownSessionId，不会再回放一次，
-        // 实时流不被打断。
         if (data.sessionId && data.sessionId !== shownSessionId) {
           setShownSessionId(data.sessionId);
           router.push(`/c/${data.sessionId}`);
         }
-        streamRun(data.runId);
+        startDriver(data as StartRunResult);
       } catch (err) {
         setItems((prev) => [
           ...prev,
-          { id: `err-${Date.now()}`, role: "progress", text: `出错：${err instanceof Error ? err.message : String(err)}` },
+          {
+            id: `err-${Date.now()}`,
+            role: "progress",
+            text: t("task.error", { message: err instanceof Error ? err.message : String(err) }),
+          },
         ]);
         setRunning(false);
       }
     },
-    [running, handleServerEvent, authState.authenticated, streamRun, router, shownSessionId],
+    [running, authState.authenticated, startDriver, resetRunView, router, shownSessionId, t],
   );
 
   const runCardAction = useCallback(
     async (card: MuseCard, action: Omit<MuseCardAction, "runId" | "interactionId">) => {
-      if (!runIdRef.current) return;
+      const driver = driverRef.current;
+      if (!driver || !runIdRef.current) return;
       setCardBusy(true);
       try {
-        const res = await request("/api/webagent/interaction", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ runId: runIdRef.current, interactionId: card.id, ...action }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          setItems((prev) => [
-            ...prev,
-            { id: `warn-${Date.now()}`, role: "progress", text: `卡片操作未生效：${data?.error ?? res.status}` },
-          ]);
-        }
+        await driver.act({ runId: runIdRef.current, interactionId: card.id, ...action });
       } catch (err) {
         setItems((prev) => [
           ...prev,
           {
             id: `warn-${Date.now()}`,
             role: "progress",
-            text: `卡片操作出错：${err instanceof Error ? err.message : String(err)}`,
+            text: t("task.cardActionError", {
+              message: err instanceof Error ? err.message : String(err),
+            }),
           },
         ]);
       } finally {
         setCardBusy(false);
       }
     },
-    [],
+    [t],
   );
+
+  const runBrowserControl = useCallback(
+    async (browserId: string, action: MuseBrowserControlAction) => {
+      const driver = driverRef.current;
+      if (!driver) return;
+      setCardBusy(true);
+      try {
+        await driver.controlBrowser(browserId, action);
+      } catch (err) {
+        setItems((prev) => [
+          ...prev,
+          {
+            id: `warn-${Date.now()}`,
+            role: "progress",
+            text: t("task.cardActionError", {
+              message: err instanceof Error ? err.message : String(err),
+            }),
+          },
+        ]);
+      } finally {
+        setCardBusy(false);
+      }
+    },
+    [t],
+  );
+
+  /** The take-control round the user currently holds, if any. */
+  const activeControlCard = cards.find((c) => c.type === "take_control" && c.status === "active") ?? null;
+  const controlActive = Boolean(activeControlCard || controlUrl);
+
+  /** Browsers for the pane: the main viewer shows the control surface while the user holds it. */
+  const paneBrowsers = useMemo<MuseBrowser[]>(() => {
+    const mainUrl = controlUrl ?? liveUrl ?? browsers.find((b) => b.id === "main")?.url ?? null;
+    const subs = browsers.filter((b) => b.id !== "main");
+    if (!mainUrl) return subs;
+    const main: MuseBrowser = {
+      id: "main",
+      label: null,
+      url: mainUrl,
+      status: null,
+      activity: null,
+      need: null,
+      userInControl: controlActive,
+    };
+    return [main, ...subs];
+  }, [browsers, liveUrl, controlUrl, controlActive]);
+
+  const releaseMain =
+    activeControlCard && activeControlCard.actions.includes("release_control")
+      ? () => void runCardAction(activeControlCard, { action: "release_control" })
+      : undefined;
+
+  const waitingForUser = runStatus === "waiting" || cards.some((c) => c.status === "pending");
 
   const lastAssistantId = [...items].reverse().find((it) => it.role === "assistant")?.id;
 
@@ -478,7 +650,7 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
         <button
           type="button"
           className="rail-backdrop"
-          aria-label="关闭会话列表"
+          aria-label={t("rail.closeList")}
           onClick={() => setRailOpen(false)}
         />
       )}
@@ -486,7 +658,7 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
       <aside className="sessions">
         <div className="sessions__head">
           <div className="brand" style={{ fontSize: 14, letterSpacing: "0.16em" }}>
-            会话
+            {t("rail.title")}
           </div>
           <div className="sessions__head-actions">
             <button
@@ -494,15 +666,15 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
               className="sessions__new"
               onClick={newConversation}
               disabled={running}
-              title="开一个全新会话"
+              title={t("rail.newChatTitle")}
             >
-              + 新对话
+              {t("rail.newChat")}
             </button>
             <button
               type="button"
               className="rail-collapse"
-              aria-label="收起侧边栏"
-              title="收起侧边栏"
+              aria-label={t("rail.collapseSidebar")}
+              title={t("rail.collapseSidebar")}
               onClick={toggleRailCollapsed}
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -512,7 +684,7 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
             <button
               type="button"
               className="rail-close"
-              aria-label="收起会话列表"
+              aria-label={t("rail.closeList")}
               onClick={() => setRailOpen(false)}
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -524,10 +696,10 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
 
         <div className="sessions__list">
           {!authState.authenticated ? (
-            <div className="sessions__empty">登录后，这里会列出你的历史会话。</div>
+            <div className="sessions__empty">{t("rail.emptySignedOut")}</div>
           ) : sessions.length === 0 ? (
             <div className="sessions__empty">
-              {sessionsLoading ? "加载中…" : "还没有会话。说一句话就会创建第一个。"}
+              {sessionsLoading ? t("rail.loading") : t("rail.emptySignedIn")}
             </div>
           ) : (
             sessions.map((s) => (
@@ -538,22 +710,21 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
                 onClick={() => selectSession(s)}
                 disabled={running && s.id !== shownSessionId}
               >
-                <div className="session-item__title">{sessionLabel(s)}</div>
+                <div className="session-item__title">{sessionLabel(s, t)}</div>
                 <div className="session-item__meta">
-                  {s.status === "running" ? "进行中 · " : ""}
-                  {formatWhen(s.updatedAt)}
+                  {s.status === "running" ? t("session.running") : ""}
+                  {formatWhen(s.updatedAt, locale, t)}
                 </div>
               </button>
             ))
           )}
         </div>
 
-        {/* PC 端拖拽改宽的手柄（窄屏抽屉模式下 CSS 隐藏）。 */}
         <div
           className="rail-resize"
           role="separator"
           aria-orientation="vertical"
-          aria-label="拖拽调整侧边栏宽度"
+          aria-label={t("rail.resize")}
           onPointerDown={startRailDrag}
           onDoubleClick={() => {
             setRailWidth(RAIL_DEFAULT);
@@ -572,7 +743,7 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
             <button
               type="button"
               className="rail-open"
-              aria-label="打开会话列表"
+              aria-label={t("rail.openList")}
               onClick={() => setRailOpen(true)}
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -582,8 +753,8 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
             <button
               type="button"
               className="rail-expand"
-              aria-label="展开会话列表"
-              title="展开侧边栏"
+              aria-label={t("rail.openList")}
+              title={t("rail.expandSidebar")}
               onClick={toggleRailCollapsed}
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -593,19 +764,20 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
             <div className="brand">agent.</div>
           </div>
           <div className="presence">
+            <LangSwitcher />
             {authState.loading ? (
               <span>…</span>
             ) : authState.authenticated ? (
               <button type="button" className="account" onClick={() => auth.logout()}>
-                {authState.user?.name || authState.user?.email || "已登录"} · 退出
+                {authState.user?.name || authState.user?.email || t("auth.signedIn")} · {t("auth.signOut")}
               </button>
             ) : (
               <button type="button" className="account" onClick={() => auth.login().catch(() => {})}>
-                用 Eazo 账号登录
+                {t("auth.signInWithEazo")}
               </button>
             )}
             <i className={running ? undefined : "idle"} />
-            {running ? "正在替你操作" : "云端浏览器待命"}
+            {running ? (waitingForUser ? t("presence.waiting") : t("presence.working")) : t("presence.idle")}
           </div>
         </header>
 
@@ -618,21 +790,19 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
                 <i />
                 <i />
               </span>
-              <span className="loading__text">正在载入这个会话…</span>
+              <span className="loading__text">{t("loading.session")}</span>
             </div>
           ) : items.length === 0 ? (
             <>
-              <div className="date">{todayLabel()}</div>
+              <div className="date">{todayLabel(t)}</div>
               <article className="message agent">
                 <div className="eyebrow">
                   <span className="orb" /> agent
                 </div>
-                <div className="reply">
-                  给我一句话就好。需要查资料、比较航班，或在网页上完成操作——右侧会同步展示正在替你打开的浏览器。
-                </div>
+                <div className="reply">{t("welcome.reply")}</div>
               </article>
               <div className="suggestions">
-                {EXAMPLES.map((ex) => (
+                {examples.map((ex) => (
                   <button key={ex} type="button" disabled={running} onClick={() => start(ex)}>
                     {ex}
                   </button>
@@ -655,6 +825,18 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
                   </div>
                 );
               }
+              if (it.role === "step" && it.step) {
+                return <StepItem key={it.id} step={it.step} />;
+              }
+              if (it.role === "thinking") {
+                const live = running && it.id === items[items.length - 1]?.id;
+                return (
+                  <details key={it.id} className="message thinking" open={live || undefined}>
+                    <summary>{live ? t("thinking.live") : t("thinking.done")}</summary>
+                    <div className="thinking__text">{it.text}</div>
+                  </details>
+                );
+              }
               const streaming = running && it.id === lastAssistantId;
               return (
                 <article key={it.id} className="message agent">
@@ -667,6 +849,18 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
                 </article>
               );
             })
+          )}
+          {!resuming && running && items[items.length - 1]?.role === "user" && (
+            // Optimistic indicator: shown as soon as the prompt is sent, until the first run event arrives.
+            <div className="loading" role="status" aria-live="polite">
+              <span className="loading__orb" aria-hidden="true" />
+              <span className="loading__dots">
+                <i />
+                <i />
+                <i />
+              </span>
+              <span className="loading__text">{t("loading.starting")}</span>
+            </div>
           )}
         </div>
 
@@ -690,8 +884,8 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
               ref={textareaRef}
               rows={1}
               value={input}
-              placeholder="此刻，你想让我做什么？"
-              aria-label="发送任务"
+              placeholder={t("composer.placeholder")}
+              aria-label={t("composer.sendTask")}
               disabled={running}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
@@ -701,56 +895,69 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
                 }
               }}
             />
-            <button className="send" type="submit" disabled={running || !input.trim()} aria-label="发送">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M5 12h14m-6-6 6 6-6 6" />
-              </svg>
-            </button>
+            {running ? (
+              <button
+                className="send send--stop"
+                type="button"
+                disabled={stopping}
+                onClick={stopRun}
+                aria-label={stopping ? t("composer.stopping") : t("composer.stop")}
+                title={stopping ? t("composer.stopping") : t("composer.stop")}
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <rect x="7" y="7" width="10" height="10" rx="2" />
+                </svg>
+              </button>
+            ) : (
+              <button className="send" type="submit" disabled={!input.trim()} aria-label={t("composer.send")}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M5 12h14m-6-6 6 6-6 6" />
+                </svg>
+              </button>
+            )}
           </form>
         </div>
       </section>
 
-      <aside className="browser">
-        <header className="topbar">
-          <div className="brand" style={{ fontSize: 14, letterSpacing: "0.16em" }}>
-            browser
-          </div>
-          <div className="presence">
-            <i className={liveUrl ? undefined : "idle"} />
-            {liveUrl ? "实时画面" : "等待任务"}
-          </div>
-        </header>
-
-        <div className="browser-frame">
-          <div className="browser-chrome">
-            <div className="browser-dots" aria-hidden="true">
-              <span />
-              <span />
-              <span />
-            </div>
-            <div className="browser-label">live session</div>
-          </div>
-          <div className="screen">
-            {liveUrl ? (
-              <iframe
-                className="screen__frame"
-                src={liveUrl}
-                title="live browser"
-                sandbox="allow-scripts allow-same-origin allow-forms"
-              />
-            ) : (
-              <div className="screen__empty">
-                <span className="orb" aria-hidden="true" />
-                <div>
-                  任务开始后，这里会显示正在操作的云端浏览器。
-                  <br />
-                  需要登录或验证码时，你可以直接在画面里操作。
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </aside>
+      <BrowserPane
+        browsers={paneBrowsers}
+        viewerKey={viewerKey}
+        controlActive={controlActive}
+        onReleaseMain={releaseMain}
+        onBrowserControl={(id, action) => void runBrowserControl(id, action)}
+        busy={cardBusy}
+      />
     </div>
+  );
+}
+
+function StepItem({ step }: { step: MuseStep }) {
+  const { t } = useTranslation();
+  const notes = step.notes ?? [];
+  const head = (
+    <>
+      <i className={`step__icon step__icon--${step.status}`} aria-hidden="true" />
+      <span className="step__label">{step.label}</span>
+      {step.status === "failed" ? <span className="step__meta">{t("step.failed")}</span> : null}
+      {step.durationMs !== undefined && step.status !== "running" ? (
+        <span className="step__meta">{(step.durationMs / 1000).toFixed(1)}s</span>
+      ) : null}
+    </>
+  );
+  if (notes.length === 0 && !step.error) {
+    return <div className={`message step step--${step.status}`}>{head}</div>;
+  }
+  return (
+    <details className={`message step step--${step.status}`}>
+      <summary>{head}</summary>
+      {step.error ? <div className="step__error">{step.error}</div> : null}
+      {notes.length > 0 ? (
+        <ul className="step__notes">
+          {notes.map((n, i) => (
+            <li key={i}>{n}</li>
+          ))}
+        </ul>
+      ) : null}
+    </details>
   );
 }

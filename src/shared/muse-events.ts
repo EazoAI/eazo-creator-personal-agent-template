@@ -1,23 +1,29 @@
 /**
- * 前端 / 服务端共享的 SSE 事件契约。
+ * Event contract shared by the client and the server.
  *
- * 服务端把 Qoni 的 RunEvent / InteractionHandle 归一成这组精简事件推给前端；
- * 前端只认这组事件，不直接接触 Qoni 令牌、host 或 wire 格式。
+ * The browser-side RunDriver normalizes Qoni RunEvents / InteractionHandles into
+ * this compact set of events; the UI only understands these shapes and never
+ * touches the Qoni wire format directly.
  */
 
 export type MuseRole = "assistant";
 
-/** 一类 HITL 卡片的精简投影（前端渲染用；真正的动作仍在服务端执行）。 */
+/** Interaction lifecycle (backend-authoritative): pending → active → resolved | expired | canceled. */
+export type MuseCardStatus = "pending" | "active" | "resolved" | "expired" | "canceled";
+
+/** Compact projection of one HITL interaction, used for rendering. */
 export interface MuseCard {
-  /** 稳定 id，贯穿卡片生命周期；前端按 id 更新同一张卡。 */
+  /** Stable id for the whole lifecycle; the UI updates the same card by id. */
   id: string;
   type: "site_login" | "take_control" | "ask_user" | "confirmation" | "fill_form" | "wait";
-  status: "pending" | "resolved" | "expired" | string;
+  status: MuseCardStatus | string;
   title: string;
   prompt?: string | null;
-  /** 该卡当前声明可用的动作（驱动前端按钮）。 */
+  /** ISO 8601 deadline; past it the card can no longer be submitted. */
+  expiresAt?: string | null;
+  /** Actions the backend currently declares as legal (drives the buttons). */
   actions: string[];
-  /** 类型相关的投影，够前端渲染即可。 */
+  /** Type-specific projection, just enough to render. */
   payload?: {
     // ask_user
     question?: string;
@@ -27,45 +33,98 @@ export interface MuseCard {
     summary?: string;
     // site_login
     sites?: { siteId: string; displayName: string; loginUrl: string }[];
-    // take_control / 实时画面
+    // take_control / live screen
     liveUrl?: string;
     // fill_form
     fields?: { name: string; label?: string; required?: boolean; type?: string }[];
   };
 }
 
+/** Whether a card still needs the user (pending, or active = user is working on it). */
+export function isOpenCard(card: Pick<MuseCard, "status">): boolean {
+  return card.status === "pending" || card.status === "active";
+}
+
 /**
- * 一条会话的精简投影（前端会话列表用）。
+ * Compact projection of one session (for the session list).
  *
- * 直接来自 Qoni 原生的 doAnything.sessions.list —— 令牌按登录用户签发，
- * 所以列表天然就是当前用户自己的会话，无需我们自建存储。
+ * Comes straight from Qoni's `doAnything.sessions.list`. The token is issued for
+ * the signed-in user, so the list only ever contains that user's sessions.
  */
 export interface MuseSession {
   id: string;
   title: string | null;
   status: "created" | "idle" | "running" | "stopped" | "timed_out" | "error" | string;
-  /** 该会话最新一个 run；续聊 / 回放都以它为锚。 */
+  /** Latest run of the session; resume / replay anchors on it. */
   latestRunId: string | null;
   updatedAt: string;
 }
 
-/** 服务端 → 前端的 SSE 事件。 */
+/** One agent tool call (`run.action.*`), keyed by `action_id` so retries fold into one entry. */
+export interface MuseStep {
+  id: string;
+  /** Action kind, e.g. "click" / "navigate" / "input". */
+  kind: string;
+  label: string;
+  status: "running" | "completed" | "failed";
+  error?: string;
+  durationMs?: number;
+  /** `run.action.progress` notes, in seq order. */
+  notes?: string[];
+}
+
+/** A step update: a full lifecycle event, or a single progress note for an existing step. */
+export type MuseStepUpdate =
+  | { type: "lifecycle"; step: MuseStep }
+  | { type: "note"; stepId: string; seq: number; note: string };
+
+/** A browser the run has open: the lead agent's (`id === "main"`) or a sub-agent's. */
+export interface MuseBrowser {
+  id: string;
+  label: string | null;
+  /** Interactive live viewer URL (iframe-able). Embeds credentials: never log it. */
+  url: string;
+  status: string | null;
+  activity: string | null;
+  need: { kind: "login" | "help"; site: string | null; prompt: string | null } | null;
+  userInControl: boolean;
+}
+
+/** Terminal outcome of a run. */
+export type MuseDoneStatus = "succeeded" | "failed" | "canceled" | "expired";
+
+/** RunDriver → UI events. */
 export type MuseServerEvent =
   | { kind: "ready"; runId: string }
-  /** 流式回答：按 messageId 更新同一气泡；text 是「到目前为止的完整回答」。 */
-  | { kind: "message"; messageId: string; text: string; done: boolean }
-  /** 进度文字（可选展示）。 */
+  /** Streamed reply: update one bubble by messageId; `text` is the full reply so far. */
+  | { kind: "message"; messageId: string; role: "ai" | "human"; text: string; done: boolean; final: boolean }
+  /** Fallback progress line for wire events without a dedicated surface. */
   | { kind: "progress"; text: string }
-  /** 实时浏览器画面地址变化（放进 iframe）。url 带访问凭证，不落日志。 */
-  | { kind: "screen"; liveUrl: string }
-  /** HITL 卡片创建 / 更新。 */
+  /** Agent tool step lifecycle / progress note. */
+  | { kind: "step"; update: MuseStepUpdate }
+  /** Model reasoning (planning-type messages). */
+  | { kind: "thinking"; text: string }
+  /** Run status change (`run.status_changed`). */
+  | { kind: "status"; status: string; waitingReason?: string }
+  /** The full list of browsers the run has open. */
+  | { kind: "browsers"; browsers: MuseBrowser[] }
+  /**
+   * Live browser URL changed (shown in the iframe). Embeds credentials: never log it.
+   * `reload` = the server asks the viewer to re-attach even if the URL is unchanged.
+   * `control` = the URL is a take-control / login control surface.
+   */
+  | { kind: "screen"; liveUrl: string; reload?: boolean; control?: boolean }
+  /** HITL card created / updated (any status). */
   | { kind: "card"; card: MuseCard }
-  /** 任务结束。 */
-  | { kind: "done"; status: string; output?: string; terminalReason?: string }
-  /** 出错。 */
+  /** Run finished. */
+  | { kind: "done"; status: MuseDoneStatus; output?: string; terminalReason?: string }
+  /** Failure. */
   | { kind: "error"; message: string };
 
-/** 前端 → 服务端：对某张 HITL 卡片执行一个动作。 */
+/** Actions on a sub-agent browser (`doAnything.browsers.control`). */
+export type MuseBrowserControlAction = "take" | "release" | "done" | "skip";
+
+/** UI → RunDriver: run one action on a HITL card. */
 export interface MuseCardAction {
   runId: string;
   interactionId: string;
@@ -77,8 +136,9 @@ export interface MuseCardAction {
     | "reject"
     | "submit"
     | "connect_control"
+    | "refresh_control"
     | "release_control"
     | "skip";
-  /** answer 的值 / submit 的表单值 / open_login 的 siteId。 */
+  /** Value for answer / form values for submit / siteId for open_login. */
   value?: unknown;
 }

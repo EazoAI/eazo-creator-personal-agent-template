@@ -9,15 +9,16 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * 列出「当前登录用户」的历史会话。
+ * List history sessions for the currently signed-in user.
  *
- * 为什么不用自建存储：
- * - 令牌由 Eazo 平台按可信登录用户签发（fetchWebAgentGrant(userId)）；
- * - doAnything.sessions.list({ token }) 返回的天然就是该令牌主人的会话。
- * 所以会话隔离完全交给 Qoni 原生能力，本 app 不维护任何会话表。
+ * Why there is no app-owned store:
+ * - The token is issued by the Eazo platform for the verified user
+ *   (fetchWebAgentGrant(userId));
+ * - doAnything.sessions.list({ token }) returns only that token owner's sessions.
+ * Session isolation is delegated to Qoni; this app keeps no session table.
  */
 export async function GET(req: NextRequest) {
-  // 身份硬约束：user_id 只来自已验证的 Eazo 登录态。
+  // Hard identity rule: user_id comes only from a verified Eazo session.
   const authed = resolveAuthedUserId(req);
   if (!authed.ok) return authed.response;
 
@@ -40,7 +41,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-/** Qoni SessionSummary → 前端会话列表用的精简投影。 */
+/** Qoni SessionSummary → slim projection for the sidebar list. */
 function toMuseSession(s: SessionSummary): MuseSession {
   return {
     id: s.id,

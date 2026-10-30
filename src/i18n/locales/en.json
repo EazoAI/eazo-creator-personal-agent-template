@@ -1,0 +1,148 @@
+{
+  "meta": {
+    "title": "Agent · Cloud browser at your service",
+    "description": "Tell the cloud browser agent what to do on the web in one sentence."
+  },
+  "today": {
+    "morning": "This morning · Say one sentence to start",
+    "day": "Today · Say one sentence to start",
+    "evening": "Tonight · Say one sentence to start"
+  },
+  "session": {
+    "untitled": "Untitled session",
+    "running": "In progress · "
+  },
+  "time": {
+    "justNow": "Just now",
+    "minutesAgo": "{n} min ago",
+    "hoursAgo": "{n} hr ago",
+    "daysAgo": "{n} d ago"
+  },
+  "task": {
+    "done": "Task finished: {status}{reason}",
+    "doneReason": " ({reason})",
+    "status": {
+      "succeeded": "completed",
+      "failed": "failed",
+      "canceled": "canceled",
+      "expired": "expired"
+    },
+    "error": "Error: {message}",
+    "openSessionError": "Could not open session: {message}",
+    "cardActionError": "Card action failed: {message}",
+    "stopError": "Could not stop the task: {message}"
+  },
+  "step": {
+    "failed": "failed"
+  },
+  "thinking": {
+    "live": "Thinking…",
+    "done": "Reasoning"
+  },
+  "errors": {
+    "loginRequired": "Please sign in first",
+    "openSessionFailed": "Could not open session",
+    "startFailed": "Could not start task",
+    "unsupportedAction": "Unsupported action: {action}"
+  },
+  "rail": {
+    "title": "Sessions",
+    "newChat": "+ New chat",
+    "newChatTitle": "Start a fresh session",
+    "collapseSidebar": "Collapse sidebar",
+    "expandSidebar": "Expand sidebar",
+    "closeList": "Close session list",
+    "openList": "Open session list",
+    "resize": "Drag to resize sidebar",
+    "emptySignedOut": "Sign in to see your past sessions here.",
+    "emptySignedIn": "No sessions yet. Send a message to create the first one.",
+    "loading": "Loading…"
+  },
+  "auth": {
+    "signedIn": "Signed in",
+    "signOut": "Sign out",
+    "signInWithEazo": "Sign in with Eazo"
+  },
+  "presence": {
+    "working": "Working for you",
+    "waiting": "Waiting for you",
+    "idle": "Cloud browser ready"
+  },
+  "loading": {
+    "session": "Loading this session…",
+    "starting": "Starting the cloud browser…"
+  },
+  "welcome": {
+    "reply": "Just tell me what you need. I can research, compare flights, or complete steps on the web—the live browser on the right shows what I am doing.",
+    "examples": [
+      "Open https://en.wikipedia.org/wiki/Singapore and summarize the key facts about the country.",
+      "Look up today's weather in Shanghai and tell me in one sentence whether I need an umbrella.",
+      "Open Hacker News and tell me the #1 post title and what people are discussing."
+    ]
+  },
+  "composer": {
+    "placeholder": "What should I do for you right now?",
+    "sendTask": "Send task",
+    "send": "Send",
+    "stop": "Stop task",
+    "stopping": "Stopping…"
+  },
+  "browser": {
+    "live": "Live view",
+    "waiting": "Waiting for task",
+    "emptyLine1": "When a task starts, the cloud browser appears here.",
+    "emptyLine2": "For login or CAPTCHA, you can interact directly in the view.",
+    "inControl": "You are in control",
+    "controlHint": "You are driving the browser. Hand it back when you're done.",
+    "handBack": "Hand back to agent",
+    "take": "Take over",
+    "done": "Done",
+    "expand": "Expand browser",
+    "collapse": "Exit full view",
+    "mainTab": "Agent",
+    "subagentTab": "Sub-agent",
+    "needBadge": "needs you",
+    "needLogin": "Please sign in to {site} in this browser.",
+    "needHelp": "This browser needs your help.",
+    "disconnected": "The live view was disconnected.",
+    "reconnect": "Reconnect"
+  },
+  "hitl": {
+    "site_login": "Site login required",
+    "take_control": "Your turn at the browser",
+    "ask_user": "The agent has a question",
+    "confirmation": "Confirmation needed",
+    "fill_form": "Form input needed",
+    "wait": "Waiting",
+    "fallback": "Action needed",
+    "allow": "Allow",
+    "deny": "Deny",
+    "takeOver": "Take over browser",
+    "release": "Release control",
+    "refreshControl": "Refresh control link",
+    "active": "in progress",
+    "expired": "expired",
+    "skip": "Skip",
+    "submit": "Submit",
+    "yes": "Yes",
+    "no": "No",
+    "answerPlaceholder": "Type your answer…",
+    "answer": "Answer",
+    "loginSites": "Login required: {sites}",
+    "openLogin": "Open login page",
+    "signedIn": "I'm signed in",
+    "submitForm": "Submit form"
+  },
+  "lang": {
+    "switchToEn": "English",
+    "switchToZh": "中文",
+    "label": "Language"
+  },
+  "api": {
+    "bodyJsonPrompt": "Request body must be JSON { prompt }",
+    "promptRequired": "prompt must not be empty",
+    "bodyJsonSessionId": "Request body must be JSON { sessionId }",
+    "sessionIdRequired": "sessionId must not be empty",
+    "sessionBusy": "The previous run in this session is still active. Wait for it to finish before sending again."
+  }
+}
