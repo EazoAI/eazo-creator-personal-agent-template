@@ -514,13 +514,25 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
     [shownSessionId, router],
   );
 
+  // Sync the shown conversation with the URL, reacting only to actual URL changes.
+  // `start()` sets `shownSessionId` before `router.push` takes effect; reacting to that
+  // intermediate render (URL still "/") would reset the view and then resume the session.
+  const lastUrlIdRef = useRef<string | null | undefined>(undefined);
+  const shownSessionIdRef = useRef<string | null>(null);
+  shownSessionIdRef.current = shownSessionId;
+
   useEffect(() => {
-    if (!authState.authenticated) return;
+    if (!authState.authenticated) {
+      lastUrlIdRef.current = undefined; // re-sync after the next sign-in
+      return;
+    }
     const urlId = sessionId ?? null;
-    if (urlId === shownSessionId) return;
+    if (lastUrlIdRef.current === urlId) return;
+    lastUrlIdRef.current = urlId;
+    if (urlId === shownSessionIdRef.current) return; // already showing it (e.g. set by start())
     if (urlId) void resumeSession(urlId);
     else resetToNew();
-  }, [sessionId, shownSessionId, authState.authenticated, resumeSession, resetToNew]);
+  }, [sessionId, authState.authenticated, resumeSession, resetToNew]);
 
   const start = useCallback(
     async (prompt: string) => {

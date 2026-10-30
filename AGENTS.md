@@ -110,7 +110,7 @@ When adding a new Qoni event or interaction type: extend the union in `muse-even
 
 ### Run lifecycle in `ChatApp`
 
-- `start(prompt)` → `POST /api/webagent/start` → `startDriver(result)`; if the response has a new `sessionId`, set `shownSessionId` **before** `router.push` to avoid a resume round-trip.
+- `start(prompt)` → `POST /api/webagent/start` → `startDriver(result)`; if the response has a new `sessionId`, set `shownSessionId` **before** `router.push`. The URL-sync effect reacts only to actual URL changes (`lastUrlIdRef`) and compares against `shownSessionIdRef`, so neither the intermediate render (state updated, URL still `/`) nor the final URL change resets the view or triggers a resume round-trip.
 - `resumeSession(id)` → `POST /api/webagent/resume` → `startDriver(result)`; `{ empty: true }` means the session has no runs yet.
 - `startDriver` always calls `driverRef.current?.stop()` first; only one driver is live at a time.
 - Switching conversations (new chat / another session) is allowed while a run is active. It only detaches the browser-side driver; the run keeps executing on Qoni and can be re-attached by opening its session again. `viewGenRef` is bumped on every view change so late `/start` / `/resume` responses from the old view are ignored, and events from a replaced driver are dropped.

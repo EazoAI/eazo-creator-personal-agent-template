@@ -524,8 +524,8 @@ button:disabled {
 }
 
 .reply {
-  font-size: 13px;
-  line-height: 1.7;
+  font-size: 15px;
+  line-height: 1.75;
   font-weight: 400;
   color: #ececf5;
   overflow-wrap: anywhere;
@@ -1476,10 +1476,6 @@ button:disabled {
   .browser {
     padding-right: calc(var(--safe-right) + 34px);
     padding-top: calc(var(--safe-top) + 30px);
-  }
-
-  .reply {
-    font-size: 18px;
   }
 
   .thread {
