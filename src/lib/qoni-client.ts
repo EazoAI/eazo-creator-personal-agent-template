@@ -18,9 +18,6 @@ import {
   type MuseCardAction,
   type MuseServerEvent,
 } from "@/shared/muse-events";
-// Make sure the base64url shim is installed before the SDK decodes tokens
-// (it calls Buffer.from(x, "base64url")).
-import "@/lib/buffer-shim";
 
 /**
  * Browser-side driver that talks to WebAgent directly.
@@ -50,14 +47,9 @@ export interface StartRunResult {
   sessionRef: { sessionId: string } | null;
 }
 
-/** Build a key-less browser client that only knows `webAgentHost`. */
+/** Build a key-less browser client that only knows `webAgentHost` (the token is passed per call). */
 function clientFor(grant: ClientGrant): Qoni {
-  return new Qoni({
-    webAgentHost: grant.webAgentHost ?? undefined,
-    // The SDK stores `fetch` as an instance property and calls it detached; native
-    // fetch must be called with `window` as receiver, otherwise "Illegal invocation".
-    fetch: typeof window !== "undefined" ? window.fetch.bind(window) : undefined,
-  });
+  return new Qoni({ webAgentHost: grant.webAgentHost ?? undefined });
 }
 
 /**

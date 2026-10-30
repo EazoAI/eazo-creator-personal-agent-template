@@ -12,8 +12,7 @@
   },
   "dependencies": {
     "@eazo/sdk": "0.22.13",
-    "@qoniai/qoni": "0.10.1",
-    "buffer": "^6.0.3",
+    "@qoniai/qoni": "0.10.3",
     "i18next": "^26.5.11",
     "next": "15.1.6",
     "react": "19.0.0",

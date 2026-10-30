@@ -140,13 +140,9 @@ When adding a new Qoni event or interaction type: extend the union in `muse-even
 
 `hitl-card.tsx` renders one `MuseCard` and emits `{ action, value }`. `useRunSession`'s `runCardAction` adds `runId` and `interactionId` and calls `driverRef.current.act()`. `RunDriver.act()` looks up the live `InteractionHandle` by `interactionId` and calls the matching SDK method. `open_login`, `connect_control` and `refresh_control` additionally emit a `screen` event (`control: true`) so the iframe switches to the login / control URL; the URL is cleared when the take_control / site_login card settles. Buttons are gated on `card.actions.includes(kind)` and on `expiresAt` not having passed — the server declares which actions are currently legal; do not hardcode availability.
 
-### Buffer shim
-
-`@qoniai/qoni` calls `Buffer.from(x, "base64url")` when decoding tokens. The browser `buffer` polyfill lacks `base64url`. `next.config.mjs` maps webpack's global `Buffer` (via `ProvidePlugin`) to `src/lib/buffer-shim.ts`, which patches it. `src/lib/qoni-client.ts` also imports the shim explicitly. If you touch `next.config.mjs`, keep this wiring intact; removing it produces `Unknown encoding: base64url` at runtime.
-
 ### Client-side `Qoni` instantiation
 
-`clientFor(grant)` passes `fetch: window.fetch.bind(window)`. The SDK stores `fetch` as an instance property and calls it detached, which throws `Illegal invocation` without the bind. Preserve this.
+`@qoniai/qoni` ≥ 0.10.3 runs in the browser as-is: no `Buffer` polyfill / shim, no webpack `resolve.fallback`, no custom `fetch`. `clientFor(grant)` is just `new Qoni({ webAgentHost })`, and every call passes the user's `grant.token`. Never construct a browser client with API keys — the grant is issued on the server.
 
 ### Internationalization (brief)
 
@@ -178,7 +174,6 @@ Client-only i18next with `en` / `zh` catalogs in `src/i18n/locales/`. All user-v
 | --- | --- |
 | `src/lib/qoni-client.ts` | `driveRunInBrowser(result, onEvent) → RunDriver`. Attaches to a run, iterates events, settles streams that close without `done`, holds open `InteractionHandle`s, executes card actions and sub-agent browser control. |
 | `src/lib/request.ts` | `fetch` wrapper that injects `x-eazo-session` and `x-locale`. Use it for all calls to `/api/*`. |
-| `src/lib/buffer-shim.ts` | `base64url` patch for the browser `Buffer` polyfill. |
 | `src/lib/chat-items.ts` | `ChatItem` type plus `mergeStreamingText` / `applyStepUpdate` for the thread. |
 | `src/lib/chat-format.ts` | Pure helpers for session titles and relative timestamps. |
 | `src/hooks/use-run-session.ts` | All run / session state: start / resume / stop, `handleServerEvent`, HITL / browser actions, session list, reopen. |
@@ -202,7 +197,7 @@ Client-only i18next with `en` / `zh` catalogs in `src/i18n/locales/`. All user-v
 
 | File | Role |
 | --- | --- |
-| `next.config.mjs` | Webpack `buffer` fallback + `ProvidePlugin` for the Buffer shim. `reactStrictMode: false`. |
+| `next.config.mjs` | Minimal; `reactStrictMode: false`. No webpack overrides are needed for the Qoni SDK. |
 | `.env.example` | Documents `EAZO_PLATFORM_API_BASE`, `EAZO_APP_ID`, `NEXT_PUBLIC_EAZO_APP_ID`, `EAZO_PRIVATE_KEY`, optional `QONI_WEBAGENT_HOST`. |
 | `package.json` | Scripts: `dev`, `build`, `start`, `lint`, `sdk:sync` (copies a local `../eazo-sdk` build into `node_modules`). |
 

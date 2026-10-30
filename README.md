@@ -57,10 +57,6 @@ Three principles drive the design:
 
 `ChatApp` is mounted once in the root layout via `ChatRoot` and reads the session id from the URL (`/` for a new chat, `/c/:id` for an existing one). Page components render `null`, so switching sessions never remounts the chat shell or interrupts an active event stream.
 
-### Client-side Buffer shim
-
-The Qoni SDK decodes JWTs with `Buffer.from(x, "base64url")`, which the browser `buffer` polyfill does not support. `next.config.mjs` wires webpack's `ProvidePlugin` to `src/lib/buffer-shim.ts`, which patches `base64url` on top of the polyfill.
-
 ## Run locally
 
 ```bash
