@@ -524,8 +524,8 @@ button:disabled {
 }
 
 .reply {
-  font-size: 16px;
-  line-height: 1.85;
+  font-size: 13px;
+  line-height: 1.7;
   font-weight: 400;
   color: #ececf5;
   overflow-wrap: anywhere;

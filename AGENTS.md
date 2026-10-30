@@ -113,6 +113,7 @@ When adding a new Qoni event or interaction type: extend the union in `muse-even
 - `start(prompt)` → `POST /api/webagent/start` → `startDriver(result)`; if the response has a new `sessionId`, set `shownSessionId` **before** `router.push` to avoid a resume round-trip.
 - `resumeSession(id)` → `POST /api/webagent/resume` → `startDriver(result)`; `{ empty: true }` means the session has no runs yet.
 - `startDriver` always calls `driverRef.current?.stop()` first; only one driver is live at a time.
+- Switching conversations (new chat / another session) is allowed while a run is active. It only detaches the browser-side driver; the run keeps executing on Qoni and can be re-attached by opening its session again. `viewGenRef` is bumped on every view change so late `/start` / `/resume` responses from the old view are ignored, and events from a replaced driver are dropped.
 - `done` / `error` events set `running=false`, stop the driver, and refresh the session list.
 - `card` events are upserted by `card.id` and filtered with `isOpenCard` (pending | active); settled cards disappear.
 - `step` events upsert one thread row per `action_id` (a retry restarts the same row). `thinking` merges into the trailing thinking bubble with `mergeStreamingText` (accepts both deltas and cumulative snapshots). `message` events replace text by `messageId` (the SDK's `text` is cumulative); a `human` message adopts the locally echoed prompt instead of duplicating it.

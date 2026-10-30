@@ -133,6 +133,8 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
   const [stopping, setStopping] = useState(false);
   /** Stop pressed before `/start` returned: cancel as soon as the driver exists. */
   const stopRequestedRef = useRef(false);
+  /** Bumped whenever the shown conversation changes; late responses from an older view are ignored. */
+  const viewGenRef = useRef(0);
   const [input, setInput] = useState("");
   const [running, setRunning] = useState(false);
   const [cardBusy, setCardBusy] = useState(false);
@@ -360,7 +362,11 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
     (result: StartRunResult) => {
       runIdRef.current = result.runId;
       driverRef.current?.stop();
-      const driver = driveRunInBrowser(result, (ev) => {
+      // `let` (not `const`): the driver emits `ready` synchronously, before the assignment below.
+      let driver: RunDriver | null = null;
+      driver = driveRunInBrowser(result, (ev) => {
+        // A driver replaced by a conversation switch may still flush a buffered event; drop it.
+        if (driver && driverRef.current !== driver) return;
         if (ev.kind !== "ready") setResuming(false);
         handleServerEvent(ev);
       });
@@ -429,7 +435,10 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
   }, []);
 
   const resetToNew = useCallback(() => {
+    viewGenRef.current += 1;
     driverRef.current?.stop();
+    driverRef.current = null;
+    stopRequestedRef.current = false;
     runIdRef.current = null;
     setShownSessionId(null);
     setItems([]);
@@ -440,8 +449,10 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
 
   const resumeSession = useCallback(
     async (id: string) => {
+      const gen = ++viewGenRef.current;
       driverRef.current?.stop();
       driverRef.current = null;
+      stopRequestedRef.current = false;
       runIdRef.current = null;
       setShownSessionId(id);
       setItems([]);
@@ -456,6 +467,8 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
           body: JSON.stringify({ sessionId: id }),
         });
         const data = await res.json();
+        // The user switched to another conversation while this request was in flight.
+        if (gen !== viewGenRef.current) return;
         if (res.status === 401) throw new Error(t("errors.loginRequired"));
         if (!res.ok) throw new Error(data?.error || t("errors.openSessionFailed"));
 
@@ -466,6 +479,7 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
         }
         startDriver(data as StartRunResult);
       } catch (err) {
+        if (gen !== viewGenRef.current) return;
         setItems((prev) => [
           ...prev,
           {
@@ -484,18 +498,20 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
   );
 
   const newConversation = useCallback(() => {
-    if (running) return;
     setRailOpen(false);
-    router.push("/");
-  }, [running, router]);
+    // Already on "/" (e.g. a new chat whose /start is still in flight): the URL won't change,
+    // so reset directly. Otherwise the URL effect resets the view.
+    if (!sessionId) resetToNew();
+    else router.push("/");
+  }, [sessionId, resetToNew, router]);
 
   const selectSession = useCallback(
     (session: MuseSession) => {
-      if (running || session.id === shownSessionId) return;
+      if (session.id === shownSessionId) return;
       setRailOpen(false);
       router.push(`/c/${session.id}`);
     },
-    [running, shownSessionId, router],
+    [shownSessionId, router],
   );
 
   useEffect(() => {
@@ -524,6 +540,7 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
       stopRequestedRef.current = false;
       setRunning(true);
       resetRunView();
+      const gen = viewGenRef.current;
 
       try {
         const res = await request("/api/webagent/start", {
@@ -535,6 +552,12 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
           }),
         });
         const data = await res.json();
+        // The user moved to another conversation meanwhile: the run keeps going server-side
+        // and shows up in the session list; don't hijack the current view.
+        if (gen !== viewGenRef.current) {
+          if (res.ok) refreshSessionsRef.current();
+          return;
+        }
         if (res.status === 401) throw new Error(t("errors.loginRequired"));
         if (!res.ok) throw new Error(data?.error || t("errors.startFailed"));
 
@@ -544,7 +567,10 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
           router.push(`/c/${data.sessionId}`);
         }
         startDriver(data as StartRunResult);
+        // Make the new / now-running session visible in the rail so the user can switch back to it.
+        refreshSessionsRef.current();
       } catch (err) {
+        if (gen !== viewGenRef.current) return;
         setItems((prev) => [
           ...prev,
           {
@@ -665,7 +691,6 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
               type="button"
               className="sessions__new"
               onClick={newConversation}
-              disabled={running}
               title={t("rail.newChatTitle")}
             >
               {t("rail.newChat")}
@@ -708,7 +733,6 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
                 type="button"
                 className={`session-item${s.id === shownSessionId ? " session-item--on" : ""}`}
                 onClick={() => selectSession(s)}
-                disabled={running && s.id !== shownSessionId}
               >
                 <div className="session-item__title">{sessionLabel(s, t)}</div>
                 <div className="session-item__meta">
