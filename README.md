@@ -80,9 +80,9 @@ bun run dev                  # http://localhost:3200
 | --- | --- |
 | `bun run dev` | Dev server on port 3200 |
 | `bun run build` / `bun run start` | Production build and serve |
-| `bun run lint` | `next lint` |
+| `bun run lint` | `eslint .` (flat config with `eslint-config-next`) |
 | `bun run sdk:sync` | Copy a locally built `../eazo-sdk` into `node_modules/@eazo/sdk` for SDK development |
 
 ## Stack
 
-Next.js 15 (App Router) · React 19 · TypeScript · `@eazo/sdk` · `@qoniai/qoni` · react-markdown · i18next (en/zh)
+Next.js 16 (App Router, Turbopack) · React 19 · TypeScript · `@eazo/sdk` · `@qoniai/qoni` · react-markdown · i18next (en/zh)

@@ -7,24 +7,26 @@
     "dev": "next dev -p 3200",
     "build": "next build",
     "start": "next start -p 3200",
-    "lint": "next lint",
+    "lint": "eslint .",
     "sdk:sync": "rm -rf node_modules/@eazo/sdk && mkdir -p node_modules/@eazo/sdk && cp ../eazo-sdk/sdk/package.json node_modules/@eazo/sdk/ && cp -r ../eazo-sdk/sdk/dist node_modules/@eazo/sdk/dist && cp -R ../eazo-sdk/sdk/node_modules node_modules/@eazo/sdk/node_modules"
   },
   "dependencies": {
     "@eazo/sdk": "0.22.13",
     "@qoniai/qoni": "0.10.3",
     "i18next": "^26.5.11",
-    "next": "15.1.6",
-    "react": "19.0.0",
-    "react-dom": "19.0.0",
+    "next": "16.4.3",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
     "react-i18next": "^17.1.9",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.3",
     "typescript": "^5"
   }
 }

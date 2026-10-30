@@ -4,7 +4,7 @@ Guidance for AI coding agents working in this repository. Read this before makin
 
 ## Project summary
 
-A Next.js 15 (App Router) personal cloud-browser agent. Users sign in with Eazo, type a task, and a Qoni WebAgent `doAnything` run executes it in a cloud browser. The UI streams the agent's messages, shows the live browser screen in an iframe, and renders human-in-the-loop (HITL) cards for logins, confirmations, questions, forms, and take-control handoffs.
+A Next.js 16 (App Router, Turbopack) personal cloud-browser agent. Users sign in with Eazo, type a task, and a Qoni WebAgent `doAnything` run executes it in a cloud browser. The UI streams the agent's messages, shows the live browser screen in an iframe, and renders human-in-the-loop (HITL) cards for logins, confirmations, questions, forms, and take-control handoffs.
 
 - Runtime: Bun for scripts, Node.js runtime for API routes.
 - Dev server: `bun run dev` → `http://localhost:3200`.
@@ -199,7 +199,8 @@ Client-only i18next with `en` / `zh` catalogs in `src/i18n/locales/`. All user-v
 | --- | --- |
 | `next.config.mjs` | Minimal; `reactStrictMode: false`. No webpack overrides are needed for the Qoni SDK. |
 | `.env.example` | Documents `EAZO_PLATFORM_API_BASE`, `EAZO_APP_ID`, `NEXT_PUBLIC_EAZO_APP_ID`, `EAZO_PRIVATE_KEY`, optional `QONI_WEBAGENT_HOST`. |
-| `package.json` | Scripts: `dev`, `build`, `start`, `lint`, `sdk:sync` (copies a local `../eazo-sdk` build into `node_modules`). |
+| `package.json` | Scripts: `dev`, `build`, `start`, `lint` (`eslint .`), `sdk:sync` (copies a local `../eazo-sdk` build into `node_modules`). |
+| `eslint.config.mjs` | Flat config: `eslint-config-next` core-web-vitals + typescript. The React Compiler rules `react-hooks/refs` and `react-hooks/set-state-in-effect` are warnings for now. |
 
 ## Conventions
 
