@@ -67,6 +67,9 @@
   "userMenu": {
     "open": "Account menu"
   },
+  "pane": {
+    "resize": "Drag to resize the browser panel (double-click to reset)"
+  },
   "presence": {
     "working": "Working for you",
     "waiting": "Waiting for you",
@@ -109,7 +112,11 @@
     "needLogin": "Please sign in to {site} in this browser.",
     "needHelp": "This browser needs your help.",
     "disconnected": "The live view was disconnected.",
-    "reconnect": "Reconnect"
+    "reconnect": "Reconnect",
+    "ended": "The browser closed after being idle",
+    "reopen": "Reopen browser",
+    "reopening": "Reopening…",
+    "reopenFailed": "Couldn't reopen the browser. Try again."
   },
   "hitl": {
     "site_login": "Site login required",

@@ -122,6 +122,9 @@ When adding a new Qoni event or interaction type: extend the union in `muse-even
 
 ### Browser pane
 
+- On attach, `RunDriver` calls `doAnything.browsers.list` for the session and emits `browsers` with `snapshot: true`; `ChatApp` treats it as authoritative for the main viewer URL. Once it has arrived, replayed (pre-attach) browser / screen events are skipped, because their signed URLs may be stale. A follow-up `start()` in the same session keeps the current browser on screen (`resetRunView({ keepBrowser: true })`), since the session's browser outlives a run.
+- The backend closes a lead browser nobody used for ~2 minutes (it emits `run.browser_live_url_changed` with an empty URL, which the SDK drops — `RunDriver` catches it via `onWireEvent` and emits `screen` with `liveUrl: ""`), and `browsers.list` is empty while the session's computer sleeps. So after a reload the list is usually empty. Like the Qoni Console's `EndedNotice`, `BrowserPane` then offers "Reopen", which calls `reopenSessionBrowser()` → `POST /do_anything/sessions/{sid}/browser/reconnect` (only legal between runs). While the pointer / focus is on the viewer, `touchSessionBrowser()` posts `/browser/activity` every 30s so it isn't closed. Both go through the SDK's internal `webAgentJson` transport because the SDK has no public wrapper for them.
+
 `src/app/browser-pane.tsx` renders the live viewers:
 
 - One tab per browser (`main` + sub-agents from the `browsers` event). A sub-agent with a `need` gets a badge and is auto-selected once; its need bar offers take / done / skip / hand back via `browser_control`.

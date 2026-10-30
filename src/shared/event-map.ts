@@ -105,7 +105,7 @@ function mapProgress(event: RunEvent): MuseServerEvent | null {
   return { kind: "progress", text };
 }
 
-function toMuseBrowser(b: AgentBrowser): MuseBrowser {
+export function toMuseBrowser(b: AgentBrowser): MuseBrowser {
   return {
     id: b.id,
     label: b.label,
@@ -156,9 +156,10 @@ export function mapRunEvent(event: RunEvent): MuseServerEvent | null {
       return { kind: "browsers", browsers: browsers.filter((b) => b?.url).map(toMuseBrowser) };
     }
     case QoniEventTypes.BrowserLiveUrlChanged: {
-      const data = ev.data as { liveUrl: string; forceViewerReload?: boolean };
-      if (!data?.liveUrl) return null;
-      return { kind: "screen", liveUrl: data.liveUrl, reload: Boolean(data.forceViewerReload) };
+      const data = ev.data as { liveUrl?: string; forceViewerReload?: boolean };
+      // An empty URL is the backend saying the lead browser closed (idle timeout / closed by the person).
+      const liveUrl = typeof data?.liveUrl === "string" ? data.liveUrl : "";
+      return { kind: "screen", liveUrl, reload: Boolean(data?.forceViewerReload) };
     }
     case QoniEventTypes.Done: {
       const data = ev.data as { output?: unknown; succeeded?: boolean | null; terminalReason?: string };

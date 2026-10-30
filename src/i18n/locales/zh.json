@@ -67,6 +67,9 @@
   "userMenu": {
     "open": "账号菜单"
   },
+  "pane": {
+    "resize": "拖拽调整浏览器区域宽度（双击恢复默认）"
+  },
   "presence": {
     "working": "正在替你操作",
     "waiting": "等你处理",
@@ -109,7 +112,11 @@
     "needLogin": "请在这个浏览器里登录 {site}。",
     "needHelp": "这个浏览器需要你帮忙。",
     "disconnected": "实时画面已断开。",
-    "reconnect": "重新连接"
+    "reconnect": "重新连接",
+    "ended": "浏览器闲置后已关闭",
+    "reopen": "重新打开浏览器",
+    "reopening": "正在重新打开…",
+    "reopenFailed": "无法重新打开浏览器，请重试"
   },
   "hitl": {
     "site_login": "需要登录网站",

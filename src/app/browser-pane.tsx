@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { MuseBrowser, MuseBrowserControlAction } from "@/shared/muse-events";
@@ -36,10 +36,85 @@ interface Props {
   onReleaseMain?: () => void;
   onBrowserControl: (browserId: string, action: MuseBrowserControlAction) => void;
   busy: boolean;
+  /** The session's browser closed between turns and can be reopened. */
+  canReopen?: boolean;
+  reopening?: boolean;
+  reopenFailed?: boolean;
+  onReopen?: () => void;
+  /** The person is using the browser (pointer over it / focus inside it); called at most every 30s. */
+  onActivity?: () => void;
 }
 
-export function BrowserPane({ browsers, viewerKey, controlActive, onReleaseMain, onBrowserControl, busy }: Props) {
+/** How often presence is reported; the backend closes a browser nobody used for two minutes. */
+const PRESENCE_INTERVAL_MS = 30_000;
+
+/**
+ * Report, while the person is at the browser, that they are (same signals as the Qoni Console):
+ * the cross-origin iframe hides clicks, but pointer enter / focus moving into the iframe are visible.
+ */
+function useBrowserPresence(ref: RefObject<HTMLElement | null>, enabled: boolean, report?: () => void) {
+  const reportRef = useRef(report);
+  reportRef.current = report;
+  useEffect(() => {
+    const element = ref.current;
+    if (!enabled || !element) return;
+    let hovering = false;
+    let lastSent = 0;
+    const focused = () => {
+      const active = document.activeElement;
+      return active instanceof HTMLIFrameElement && element.contains(active);
+    };
+    const present = () => document.visibilityState === "visible" && (hovering || focused());
+    const send = (force = false) => {
+      const now = Date.now();
+      if (!force && now - lastSent < PRESENCE_INTERVAL_MS) return;
+      lastSent = now;
+      reportRef.current?.();
+    };
+    const onEnter = () => {
+      hovering = true;
+      send();
+    };
+    const onLeave = () => {
+      hovering = false;
+    };
+    const onUse = () => send();
+    const onBlur = () =>
+      window.setTimeout(() => {
+        if (focused()) send();
+      }, 0);
+    element.addEventListener("pointerenter", onEnter);
+    element.addEventListener("pointerleave", onLeave);
+    element.addEventListener("pointerdown", onUse);
+    window.addEventListener("blur", onBlur);
+    const timer = window.setInterval(() => {
+      if (present()) send(true);
+    }, PRESENCE_INTERVAL_MS);
+    return () => {
+      element.removeEventListener("pointerenter", onEnter);
+      element.removeEventListener("pointerleave", onLeave);
+      element.removeEventListener("pointerdown", onUse);
+      window.removeEventListener("blur", onBlur);
+      window.clearInterval(timer);
+    };
+  }, [ref, enabled]);
+}
+
+export function BrowserPane({
+  browsers,
+  viewerKey,
+  controlActive,
+  onReleaseMain,
+  onBrowserControl,
+  busy,
+  canReopen,
+  reopening,
+  reopenFailed,
+  onReopen,
+  onActivity,
+}: Props) {
   const { t } = useTranslation();
+  const screenRef = useRef<HTMLDivElement>(null);
   const [selectedId, setSelectedId] = useState<string>("main");
   const [deck, setDeck] = useState<string[]>([]);
   const [expanded, setExpanded] = useState(false);
@@ -114,6 +189,7 @@ export function BrowserPane({ browsers, viewerKey, controlActive, onReleaseMain,
 
   const inControl = selected ? (selected.id === "main" ? controlActive : selected.userInControl) : false;
   const hasLive = browsers.length > 0;
+  useBrowserPresence(screenRef, browsers.some((b) => b.id === "main"), onActivity);
 
   return (
     <aside className={`browser${expanded ? " browser--expanded" : ""}`}>
@@ -215,7 +291,7 @@ export function BrowserPane({ browsers, viewerKey, controlActive, onReleaseMain,
           </div>
         )}
 
-        <div className={`screen${inControl ? " screen--control" : ""}`}>
+        <div ref={screenRef} className={`screen${inControl ? " screen--control" : ""}`}>
           {hasLive ? (
             <div className="screen__deck">
               {deck.map((id) => {
@@ -246,8 +322,21 @@ export function BrowserPane({ browsers, viewerKey, controlActive, onReleaseMain,
                   <button type="button" className="btn" onClick={() => reconnect(activeId)}>
                     {t("browser.reconnect")}
                   </button>
+                  {activeId === "main" && canReopen && onReopen && (
+                    <button type="button" className="btn btn--ghost" disabled={reopening} onClick={onReopen}>
+                      {reopening ? t("browser.reopening") : t("browser.reopen")}
+                    </button>
+                  )}
                 </div>
               )}
+            </div>
+          ) : canReopen && onReopen ? (
+            <div className="screen__empty">
+              <span className="orb orb--idle" aria-hidden="true" />
+              <div>{reopenFailed ? t("browser.reopenFailed") : t("browser.ended")}</div>
+              <button type="button" className="btn" disabled={reopening} onClick={onReopen}>
+                {reopening ? t("browser.reopening") : t("browser.reopen")}
+              </button>
             </div>
           ) : (
             <div className="screen__empty">

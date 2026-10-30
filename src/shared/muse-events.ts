@@ -106,13 +106,18 @@ export type MuseServerEvent =
   | { kind: "thinking"; text: string }
   /** Run status change (`run.status_changed`). */
   | { kind: "status"; status: string; waitingReason?: string }
-  /** The full list of browsers the run has open. */
-  | { kind: "browsers"; browsers: MuseBrowser[] }
+  /**
+   * The full list of browsers the run has open. `snapshot` = fetched from
+   * `doAnything.browsers.list` (current, freshly signed): it is authoritative for the
+   * main viewer URL too, including "no browser open".
+   */
+  | { kind: "browsers"; browsers: MuseBrowser[]; snapshot?: boolean }
   /**
    * Live browser URL changed (shown in the iframe). Embeds credentials: never log it.
    * `reload` = the server asks the viewer to re-attach even if the URL is unchanged.
    * `control` = the URL is a take-control / login control surface.
    */
+  /** `liveUrl: ""` means the lead browser was closed (e.g. after idling); offer to reopen it. */
   | { kind: "screen"; liveUrl: string; reload?: boolean; control?: boolean }
   /** HITL card created / updated (any status). */
   | { kind: "card"; card: MuseCard }

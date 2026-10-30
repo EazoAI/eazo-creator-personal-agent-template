@@ -14,7 +14,14 @@ import { BrowserPane } from "./browser-pane";
 import { HitlCard } from "./hitl-card";
 import { Markdown } from "./markdown";
 import { UserMenu } from "./user-menu";
-import { driveRunInBrowser, type RunDriver, type StartRunResult } from "@/lib/qoni-client";
+import {
+  driveRunInBrowser,
+  reopenSessionBrowser,
+  touchSessionBrowser,
+  type ClientGrant,
+  type RunDriver,
+  type StartRunResult,
+} from "@/lib/qoni-client";
 import {
   isOpenCard,
   type MuseBrowser,
@@ -148,6 +155,15 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
   const liveUrlRef = useRef<string | null>(null);
   const chatRef = useRef<HTMLDivElement>(null);
   const driverRef = useRef<RunDriver | null>(null);
+  /**
+   * The shown session's latest grant. Outlives the driver: reopening the session's browser after
+   * its run ended (or after a page reload) needs a token but no event stream.
+   */
+  const sessionGrantRef = useRef<{ sessionId: string; grant: ClientGrant } | null>(null);
+  /** The shown session has had at least one run (so it owns a browser that can be reopened). */
+  const [hasRun, setHasRun] = useState(false);
+  const [reopening, setReopening] = useState(false);
+  const [reopenFailed, setReopenFailed] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const refreshSessionsRef = useRef<() => void>(() => {});
 
@@ -159,6 +175,64 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
   const [railAnim, setRailAnim] = useState(true);
   const draggingRef = useRef(false);
 
+  // Chat ↔ browser divider. null = default proportional split.
+  const BROWSER_MIN = 380;
+  const CHAT_MIN = 340;
+  const [browserWidth, setBrowserWidth] = useState<number | null>(null);
+  const shellRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    try {
+      const w = Number(localStorage.getItem("muse.browserWidth"));
+      if (w >= BROWSER_MIN) setBrowserWidth(w);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const startPaneDrag = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    const shellLeft = shellRef.current?.getBoundingClientRect().left ?? 0;
+    let last: number | null = null;
+    setRailAnim(false);
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    // Iframes swallow pointer events mid-drag; disable them while dragging.
+    document.body.classList.add("is-pane-dragging");
+
+    const onMove = (ev: PointerEvent) => {
+      const max = window.innerWidth - shellLeft - CHAT_MIN;
+      const w = Math.round(Math.min(max, Math.max(BROWSER_MIN, window.innerWidth - ev.clientX)));
+      last = w;
+      setBrowserWidth(w);
+    };
+    const onUp = () => {
+      setRailAnim(true);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      document.body.classList.remove("is-pane-dragging");
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      if (last !== null) {
+        try {
+          localStorage.setItem("muse.browserWidth", String(last));
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }, []);
+
+  const resetPaneWidth = useCallback(() => {
+    setBrowserWidth(null);
+    try {
+      localStorage.removeItem("muse.browserWidth");
+    } catch {
+      /* ignore */
+    }
+  }, []);
   useEffect(() => {
     try {
       const w = Number(localStorage.getItem("muse.railWidth"));
@@ -278,6 +352,14 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
         break;
       case "browsers":
         setBrowsers(ev.browsers);
+        if (ev.snapshot) {
+          // A fresh list is authoritative for the main viewer, including "no browser open".
+          const main = ev.browsers.find((b) => b.id === "main")?.url ?? null;
+          if (main !== liveUrlRef.current) {
+            liveUrlRef.current = main;
+            setLiveUrl(main);
+          }
+        }
         break;
       case "screen":
         if (ev.control) {
@@ -286,6 +368,13 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
           break;
         }
         // Like the Console: only re-attach on a forced reload or when the same URL is re-sent.
+        if (!ev.liveUrl) {
+          // The lead browser closed (idle timeout); the pane offers to reopen it.
+          liveUrlRef.current = null;
+          setLiveUrl(null);
+          setBrowsers((prev) => prev.filter((b) => b.id !== "main"));
+          break;
+        }
         if (liveUrlRef.current && (ev.reload || liveUrlRef.current === ev.liveUrl)) setViewerKey((k) => k + 1);
         liveUrlRef.current = ev.liveUrl;
         setLiveUrl(ev.liveUrl);
@@ -361,6 +450,10 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
   const startDriver = useCallback(
     (result: StartRunResult) => {
       runIdRef.current = result.runId;
+      const sid = result.sessionRef?.sessionId ?? result.sessionId;
+      if (sid) sessionGrantRef.current = { sessionId: sid, grant: result.grant };
+      setHasRun(true);
+      setReopenFailed(false);
       driverRef.current?.stop();
       // `let` (not `const`): the driver emits `ready` synchronously, before the assignment below.
       let driver: RunDriver | null = null;
@@ -425,13 +518,21 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
   }, [authState.authenticated, refreshSessions]);
 
   /** Clear everything bound to the previous run's browser / status. */
-  const resetRunView = useCallback(() => {
+  /**
+   * Clear everything bound to the previous run. `keepBrowser`: a follow-up run in the same
+   * session reuses the session's browser, so keep showing it until the new run says otherwise.
+   */
+  const resetRunView = useCallback((opts?: { keepBrowser?: boolean }) => {
     setCards([]);
+    setControlUrl(null);
+    setRunStatus(null);
+    setReopenFailed(false);
+    if (opts?.keepBrowser) return;
     setLiveUrl(null);
     liveUrlRef.current = null;
-    setControlUrl(null);
     setBrowsers([]);
-    setRunStatus(null);
+    setHasRun(false);
+    sessionGrantRef.current = null;
   }, []);
 
   const resetToNew = useCallback(() => {
@@ -551,7 +652,8 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
       driverRef.current = null;
       stopRequestedRef.current = false;
       setRunning(true);
-      resetRunView();
+      // Continuing an existing session: its browser is still open, keep it on screen.
+      resetRunView({ keepBrowser: Boolean(shownSessionId) });
       const gen = viewGenRef.current;
 
       try {
@@ -647,6 +749,54 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
     [t],
   );
 
+  /** The shown session's grant; re-issued through `/resume` when none is held (it does not start a stream). */
+  const grantFor = useCallback(async (sid: string, fresh = false): Promise<ClientGrant> => {
+    const held = sessionGrantRef.current;
+    if (!fresh && held?.sessionId === sid) return held.grant;
+    const res = await request("/api/webagent/resume", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: sid }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data?.grant) throw new Error(data?.error || t("errors.openSessionFailed"));
+    sessionGrantRef.current = { sessionId: sid, grant: data.grant as ClientGrant };
+    return data.grant as ClientGrant;
+  }, [t]);
+
+  /** Reopen the session's closed browser between turns (the Console's "Reopen"). */
+  const reopenBrowser = useCallback(async () => {
+    const sid = shownSessionId;
+    if (!sid || reopening) return;
+    const gen = viewGenRef.current;
+    setReopening(true);
+    setReopenFailed(false);
+    try {
+      let url: string;
+      try {
+        url = await reopenSessionBrowser(await grantFor(sid), sid);
+      } catch {
+        // The held token may have expired: retry once with a fresh grant.
+        url = await reopenSessionBrowser(await grantFor(sid, true), sid);
+      }
+      if (gen !== viewGenRef.current) return;
+      liveUrlRef.current = url;
+      setLiveUrl(url);
+      setViewerKey((k) => k + 1);
+    } catch {
+      if (gen === viewGenRef.current) setReopenFailed(true);
+    } finally {
+      if (gen === viewGenRef.current) setReopening(false);
+    }
+  }, [shownSessionId, reopening, grantFor]);
+
+  /** The person is at the browser: keep it from being closed for idling. */
+  const reportBrowserActivity = useCallback(() => {
+    const held = sessionGrantRef.current;
+    if (!held || held.sessionId !== shownSessionId) return;
+    void touchSessionBrowser(held.grant, held.sessionId).catch(() => {});
+  }, [shownSessionId]);
+
   /** The take-control round the user currently holds, if any. */
   const activeControlCard = cards.find((c) => c.type === "take_control" && c.status === "active") ?? null;
   const controlActive = Boolean(activeControlCard || controlUrl);
@@ -680,7 +830,12 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
   return (
     <div
       className={`app${railOpen ? " app--rail-open" : ""}${railCollapsed ? " app--rail-collapsed" : ""}${railAnim ? " app--rail-anim" : ""}`}
-      style={{ ["--rail-w" as string]: `${railWidth}px` }}
+      style={{
+        ["--rail-w" as string]: `${railWidth}px`,
+        ...(browserWidth !== null
+          ? { ["--browser-col" as string]: `minmax(${BROWSER_MIN}px, ${browserWidth}px)` }
+          : {}),
+      }}
     >
       <div className="atmosphere" aria-hidden="true" />
 
@@ -781,7 +936,16 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
         />
       </aside>
 
-      <section className="shell">
+      <section className="shell" ref={shellRef}>
+        <div
+          className="pane-resize"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={t("pane.resize")}
+          title={t("pane.resize")}
+          onPointerDown={startPaneDrag}
+          onDoubleClick={resetPaneWidth}
+        />
         <header className="topbar">
           <div className="topbar__left">
             <button
@@ -958,6 +1122,11 @@ export default function ChatApp({ sessionId }: { sessionId?: string }) {
         onReleaseMain={releaseMain}
         onBrowserControl={(id, action) => void runBrowserControl(id, action)}
         busy={cardBusy}
+        canReopen={hasRun && !running && Boolean(shownSessionId)}
+        reopening={reopening}
+        reopenFailed={reopenFailed}
+        onReopen={() => void reopenBrowser()}
+        onActivity={reportBrowserActivity}
       />
     </div>
   );

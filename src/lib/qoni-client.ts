@@ -11,7 +11,7 @@ import {
   type FormValues,
 } from "@qoniai/qoni";
 
-import { mapRunEvent, toMuseCard } from "@/shared/event-map";
+import { mapRunEvent, toMuseBrowser, toMuseCard } from "@/shared/event-map";
 import {
   isOpenCard,
   type MuseBrowserControlAction,
@@ -60,6 +60,76 @@ function clientFor(grant: ClientGrant): Qoni {
   });
 }
 
+/**
+ * The SDK has no public wrapper for the session-browser routes the Qoni Console uses
+ * (`/browser/reconnect`, `/browser/activity`). Its internal `webAgentJson` transport resolves the
+ * WebAgent base URL and the tenant path from the token, so reuse it rather than rebuilding that.
+ */
+type WebAgentTransport = {
+  webAgentJson<T>(
+    method: "POST",
+    path: string,
+    token: string,
+    payload: { body?: unknown; requiredScopes?: string[]; signal?: AbortSignal },
+  ): Promise<{ data: T }>;
+};
+
+function webAgentPost<T>(grant: ClientGrant, path: string, body: unknown, signal?: AbortSignal): Promise<{ data: T }> {
+  const transport = clientFor(grant) as unknown as WebAgentTransport;
+  if (typeof transport.webAgentJson !== "function") {
+    return Promise.reject(new Error("this Qoni SDK version cannot reach the session browser"));
+  }
+  return transport.webAgentJson<T>("POST", path, grant.token, {
+    body,
+    requiredScopes: ["webagent.do_anything:manage"],
+    signal,
+  });
+}
+
+/**
+ * Reopen the session's lead browser between turns: signed in, on the page it was last on.
+ * The backend closes a browser nobody used for ~2 minutes (and the session's computer sleeps), so
+ * after a reload the list is usually empty; this is the Console's "Reopen" (`restoreSessionBrowser`).
+ * Fails with 409 while a run is active.
+ */
+export async function reopenSessionBrowser(
+  grant: ClientGrant,
+  sessionId: string,
+  pageUrl?: string | null,
+): Promise<string> {
+  const { data } = await webAgentPost<{ live_url?: string }>(
+    grant,
+    `/do_anything/sessions/${encodeURIComponent(sessionId)}/browser/reconnect`,
+    { page_url: pageUrl || null },
+    AbortSignal.timeout(30_000),
+  );
+  if (!data?.live_url) throw new Error("the browser did not come back");
+  return data.live_url;
+}
+
+/** Tell the backend the person is using the browser, so it is not closed for idling. */
+export async function touchSessionBrowser(grant: ClientGrant, sessionId: string): Promise<void> {
+  await webAgentPost(grant, `/do_anything/sessions/${encodeURIComponent(sessionId)}/browser/activity`, {});
+}
+
+/** `run.browser_live_url_changed` with an empty URL: the lead browser closed. The SDK drops these. */
+function isLeadBrowserClosed(wire: { event?: string; data: unknown }): boolean {
+  const data = wire.data as { type?: string; data?: { live_url?: unknown }; live_url?: unknown } | null;
+  if (!data || typeof data !== "object") return false;
+  const type = data.type ?? wire.event;
+  if (type !== "run.browser_live_url_changed") return false;
+  const payload = data.data && typeof data.data === "object" ? data.data : data;
+  return !payload.live_url;
+}
+
+/** A wire frame stamped well before attach (or with no usable stamp). */
+function isReplayedWire(wire: { data: unknown }, attachedAt: number): boolean {
+  const data = wire.data as { occurred_at?: unknown; ts?: unknown } | null;
+  const stamp = data?.occurred_at ?? data?.ts;
+  const at = typeof stamp === "string" ? Date.parse(stamp) : typeof stamp === "number" ? stamp : NaN;
+  return !Number.isFinite(at) || at < attachedAt - HISTORY_SKEW_MS;
+}
+
 /** A take_control round opened by `openLogin()`; it belongs to the site_login card. */
 function isLoginControl(interaction: Interaction): boolean {
   return (
@@ -91,6 +161,9 @@ export interface RunDriver {
 
 /** How long to wait for the stream's own terminal event after a cancel. */
 const CANCEL_SETTLE_MS = 5000;
+
+/** Events older than attach time by more than this are treated as replayed history (tolerates clock skew). */
+const HISTORY_SKEW_MS = 30_000;
 
 export function driveRunInBrowser(
   result: StartRunResult,
@@ -150,6 +223,31 @@ export function driveRunInBrowser(
       runRef = run;
       resolveRun(run);
 
+      // The session's browsers outlive a single run: a follow-up run (or a replay after a page
+      // refresh) may never emit a fresh `browser_live_url_changed`, and replayed viewer URLs can be
+      // stale or redacted. Ask for the current, freshly signed list instead.
+      const attachedAt = Date.now();
+      let listed = false;
+      const sessionId = result.sessionRef?.sessionId ?? run.sessionRef?.sessionId ?? result.sessionId;
+      if (sessionId) {
+        void app.doAnything.browsers
+          .list({ token: result.grant.token, sessionId, signal: controller.signal })
+          .then((list) => {
+            if (controller.signal.aborted) return;
+            listed = true;
+            const browsers = list.filter((b) => b?.url).map(toMuseBrowser);
+            onEvent({ kind: "browsers", browsers, snapshot: true });
+          })
+          .catch(() => {
+            /* Fall back to whatever the event stream carries. */
+          });
+      }
+      /** Replayed history (well before attach) whose viewer URLs the fresh list supersedes. */
+      const isStaleBrowserEvent = (event: RunEvent, mapped: MuseServerEvent) =>
+        listed &&
+        (mapped.kind === "browsers" || (mapped.kind === "screen" && !mapped.control)) &&
+        Date.parse(event.at) < attachedAt - HISTORY_SKEW_MS;
+
       let lastEventId: string | undefined;
       let resumes = 0;
       for (;;) {
@@ -163,6 +261,10 @@ export function driveRunInBrowser(
               lastEventId = wire.id;
               progressed = true;
             }
+            // Replayed history is superseded by the fresh list, same as the stale filter below.
+            if (isLeadBrowserClosed(wire) && !(listed && isReplayedWire(wire, attachedAt))) {
+              onEvent({ kind: "screen", liveUrl: "" });
+            }
           },
         })) {
           if (event.type === QoniEventTypes.Interaction) {
@@ -171,6 +273,7 @@ export function driveRunInBrowser(
           }
           const mapped = mapRunEvent(event as RunEvent);
           if (!mapped) continue;
+          if (isStaleBrowserEvent(event as RunEvent, mapped)) continue;
           if (mapped.kind === "done") {
             sawTerminal = true;
             finish(mapped);

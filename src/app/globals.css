@@ -68,7 +68,7 @@ button:disabled {
   overflow: hidden;
   background: var(--ground);
   display: grid;
-  grid-template-columns: var(--rail-w, 220px) minmax(340px, 1fr) minmax(380px, 1.15fr);
+  grid-template-columns: var(--rail-w, 220px) minmax(340px, 1fr) var(--browser-col, minmax(380px, 1.15fr));
   gap: 0;
 }
 
@@ -83,7 +83,7 @@ button:disabled {
 
 /* Desktop collapsed: narrow icon strip — avatar stays reachable. */
 .app--rail-collapsed {
-  grid-template-columns: 56px minmax(340px, 1fr) minmax(380px, 1.15fr);
+  grid-template-columns: 56px minmax(340px, 1fr) var(--browser-col, minmax(380px, 1.15fr));
 }
 
 .app--rail-collapsed .sessions {
@@ -356,6 +356,39 @@ button:disabled {
 
 .rail-resize:hover::after {
   background: rgba(200, 209, 255, 0.5);
+}
+
+/* Drag-to-resize handle on the chat ↔ browser divider (right edge of .shell). */
+.pane-resize {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 6;
+  touch-action: none;
+}
+
+.pane-resize::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 3px;
+  width: 1px;
+  height: 100%;
+  background: transparent;
+  transition: background 0.2s;
+}
+
+.pane-resize:hover::after,
+.is-pane-dragging .pane-resize::after {
+  background: rgba(200, 209, 255, 0.5);
+}
+
+/* Keep pointer events flowing to the window while dragging over iframes. */
+.is-pane-dragging iframe {
+  pointer-events: none;
 }
 
 .app--rail-collapsed .rail-resize {
@@ -1243,6 +1276,12 @@ button:disabled {
   margin-bottom: 4px;
 }
 
+.screen__empty .orb--idle {
+  filter: grayscale(0.8);
+  opacity: 0.6;
+  box-shadow: none;
+}
+
 .browser-frame--control {
   border-color: rgba(111, 191, 138, 0.55);
   box-shadow: 0 0 0 1px rgba(111, 191, 138, 0.25), 0 0 40px rgba(0, 0, 0, 0.22);
@@ -1781,7 +1820,8 @@ button:disabled {
   /* In drawer mode, hide desktop collapse/expand/resize controls. */
   .rail-collapse,
   .rail-expand,
-  .rail-resize {
+  .rail-resize,
+  .pane-resize {
     display: none !important;
   }
 
